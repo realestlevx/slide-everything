@@ -22,6 +22,9 @@
       "StarterPlayerScripts": {
         "Client": {
           "$path": "src/client"
+        },
+        "WindController": {
+          "$path": "src/WindController"
         }
       }
     },
