@@ -1,0 +1,13 @@
+# Project place file
+/Slide Everything.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+sourcemap.json
+
+# Wally packages
+/Packages
+/ServerPackages
+/DevPackages
