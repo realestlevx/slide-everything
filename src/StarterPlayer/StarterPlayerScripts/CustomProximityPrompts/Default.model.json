@@ -1,0 +1,269 @@
+{
+  "className": "BillboardGui",
+  "properties": {
+    "Active": { "Bool": true },
+    "AlwaysOnTop": { "Bool": true },
+    "MaxDistance": { "Float32": 50 },
+    "Size": { "UDim2": [[0, 210], [0, 70]] }
+  },
+  "children": [
+    {
+      "name": "TextButton",
+      "className": "TextButton",
+      "properties": {
+        "BackgroundTransparency": { "Float32": 1 },
+        "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+        "Selectable": { "Bool": false },
+        "Size": { "UDim2": [[1, 0], [1, 0]] },
+        "TextTransparency": { "Float32": 1 }
+      }
+    },
+    {
+      "name": "PromptFrame",
+      "className": "ImageLabel",
+      "properties": {
+        "BackgroundColor3": { "Color3": [0, 0, 0] },
+        "BackgroundTransparency": { "Float32": 0.5 },
+        "Image": { "String": "rbxasset://textures/ui/GuiImagePlaceholder.png" },
+        "ImageTransparency": { "Float32": 1 },
+        "Size": { "UDim2": [[1, 0], [1, 0]] }
+      },
+      "children": [
+        {
+          "name": "InputFrame",
+          "className": "Frame",
+          "properties": {
+            "BackgroundTransparency": { "Float32": 1 },
+            "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+            "Size": { "UDim2": [[1, 0], [1, 0]] }
+          },
+          "children": [
+            {
+              "name": "Frame",
+              "className": "Frame",
+              "properties": {
+                "AnchorPoint": { "Vector2": [0.5, 0.5] },
+                "BackgroundColor3": { "Color3": [0.662745, 0.172549, 0.670588] },
+                "BackgroundTransparency": { "Float32": 1 },
+                "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
+                "Size": { "UDim2": [[1.2, 0], [1.2, 0]] }
+              },
+              "children": [
+                {
+                  "name": "ProgressBar",
+                  "className": "Frame",
+                  "properties": {
+                    "AnchorPoint": { "Vector2": [0.5, 0.5] },
+                    "BackgroundTransparency": { "Float32": 1 },
+                    "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                    "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
+                    "Size": { "UDim2": [[1, -14], [1, -14]] }
+                  },
+                  "children": [
+                    {
+                      "name": "LeftGradient",
+                      "className": "Frame",
+                      "properties": {
+                        "BackgroundTransparency": { "Float32": 1 },
+                        "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                        "ClipsDescendants": { "Bool": true },
+                        "Size": { "UDim2": [[0.5, 0], [1, 0]] }
+                      },
+                      "children": [
+                        {
+                          "name": "ProgressBarImage",
+                          "className": "ImageLabel",
+                          "properties": {
+                            "BackgroundTransparency": { "Float32": 1 },
+                            "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                            "Image": { "String": "rbxasset://textures/ui/Controls/RadialFill.png" },
+                            "Size": { "UDim2": [[2, 0], [1, 0]] }
+                          },
+                          "children": [
+                            {
+                              "name": "UIGradient",
+                              "className": "UIGradient",
+                              "properties": {
+                                "Rotation": { "Float32": 180 },
+                                "Transparency": { "NumberSequence": { "keypoints": [{ "time": 0, "value": 0, "envelope": 0 }, { "time": 0.4999, "value": 0, "envelope": 0 }, { "time": 0.5, "value": 1, "envelope": 0 }, { "time": 1, "value": 1, "envelope": 0 }] } }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "RightGradient",
+                      "className": "Frame",
+                      "properties": {
+                        "BackgroundTransparency": { "Float32": 1 },
+                        "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                        "ClipsDescendants": { "Bool": true },
+                        "Position": { "UDim2": [[0.5, 0], [0, 0]] },
+                        "Size": { "UDim2": [[0.5, 0], [1, 0]] }
+                      },
+                      "children": [
+                        {
+                          "name": "ProgressBarImage",
+                          "className": "ImageLabel",
+                          "properties": {
+                            "BackgroundTransparency": { "Float32": 1 },
+                            "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                            "Image": { "String": "rbxasset://textures/ui/Controls/RadialFill.png" },
+                            "Position": { "UDim2": [[-1, 0], [0, 0]] },
+                            "Size": { "UDim2": [[2, 0], [1, 0]] }
+                          },
+                          "children": [
+                            {
+                              "name": "UIGradient",
+                              "className": "UIGradient",
+                              "properties": {
+                                "Transparency": { "NumberSequence": { "keypoints": [{ "time": 0, "value": 0, "envelope": 0 }, { "time": 0.4999, "value": 0, "envelope": 0 }, { "time": 0.5, "value": 1, "envelope": 0 }, { "time": 1, "value": 1, "envelope": 0 }] } }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Progress",
+                      "className": "NumberValue"
+                    }
+                  ]
+                },
+                {
+                  "name": "ButtonFrame",
+                  "className": "ImageLabel",
+                  "properties": {
+                    "AnchorPoint": { "Vector2": [0.5, 0.5] },
+                    "BackgroundColor3": { "Color3": [0, 0, 0] },
+                    "BackgroundTransparency": { "Float32": 0.5 },
+                    "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                    "Image": { "String": "rbxasset://textures/ui/GuiImagePlaceholder.png" },
+                    "ImageTransparency": { "Float32": 1 },
+                    "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
+                    "Size": { "UDim2": [[1, -24], [1, -24]] }
+                  },
+                  "children": [
+                    {
+                      "name": "UICorner",
+                      "className": "UICorner",
+                      "properties": {
+                        "CornerRadius": { "UDim": [0.5, 0] }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "name": "ButtonImage",
+                  "className": "ImageLabel",
+                  "properties": {
+                    "AnchorPoint": { "Vector2": [0.5, 0.5] },
+                    "BackgroundTransparency": { "Float32": 1 },
+                    "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                    "Image": { "String": "rbxasset://textures/ui/Controls/key_single.png" },
+                    "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
+                    "Size": { "UDim2": [[1, -44], [1, -42]] }
+                  }
+                },
+                {
+                  "name": "ButtonTextImage",
+                  "className": "ImageLabel",
+                  "properties": {
+                    "AnchorPoint": { "Vector2": [0.5, 0.5] },
+                    "BackgroundTransparency": { "Float32": 1 },
+                    "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                    "Image": { "String": "rbxasset://textures/ui/Controls/shift.png" },
+                    "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
+                    "Size": { "UDim2": [[1, -48], [1, -48]] },
+                    "Visible": { "Bool": false }
+                  }
+                },
+                {
+                  "name": "ButtonText",
+                  "className": "TextLabel",
+                  "properties": {
+                    "BackgroundTransparency": { "Float32": 1 },
+                    "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+                    "FontFace": { "Font": { "family": "rbxassetid://12187373327", "weight": "Bold", "style": "Normal" } },
+                    "Position": { "UDim2": [[0, 0], [0, -1]] },
+                    "Size": { "UDim2": [[1, 0], [1, 0]] },
+                    "Text": { "String": "E" },
+                    "TextColor3": { "Color3": [1, 1, 1] },
+                    "TextSize": { "Float32": 27 },
+                    "TextWrapped": { "Bool": true }
+                  }
+                },
+                {
+                  "name": "UIScale",
+                  "className": "UIScale"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "ObjectText",
+          "className": "TextLabel",
+          "properties": {
+            "BackgroundColor3": { "Color3": [0.976471, 0.972549, 1] },
+            "BackgroundTransparency": { "Float32": 1 },
+            "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+            "FontFace": { "Font": { "family": "rbxassetid://16658221428", "weight": "Medium", "style": "Normal" } },
+            "Position": { "UDim2": [[0.5, -24], [0, -10]] },
+            "Size": { "UDim2": [[1, 0], [1, 0]] },
+            "Text": { "String": "Object Text" },
+            "TextColor3": { "Color3": [0.698039, 0.698039, 0.698039] },
+            "TextSize": { "Float32": 14 },
+            "TextXAlignment": { "Enum": 0 },
+            "Visible": { "Bool": false }
+          }
+        },
+        {
+          "name": "ActionText",
+          "className": "TextLabel",
+          "properties": {
+            "BackgroundTransparency": { "Float32": 1 },
+            "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
+            "FontFace": { "Font": { "family": "rbxassetid://12187373327", "weight": "Bold", "style": "Normal" } },
+            "Position": { "UDim2": [[0.45, -24], [0, 0]] },
+            "RichText": { "Bool": true },
+            "Size": { "UDim2": [[0.64, 0], [1, 0]] },
+            "Text": { "String": "Collect 💵" },
+            "TextColor3": { "Color3": [1, 1, 1] },
+            "TextScaled": { "Bool": true },
+            "TextSize": { "Float32": 19 },
+            "TextWrapped": { "Bool": true },
+            "TextXAlignment": { "Enum": 0 }
+          },
+          "children": [
+            {
+              "name": "UIStroke",
+              "className": "UIStroke",
+              "properties": {
+                "Thickness": { "Float32": 0.1 },
+                "StrokeSizingMode": { "Enum": 1 }
+              }
+            }
+          ]
+        },
+        {
+          "name": "UICorner",
+          "className": "UICorner",
+          "properties": {
+            "CornerRadius": { "UDim": [0.1, 0] }
+          }
+        },
+        {
+          "name": "UIStroke",
+          "className": "UIStroke",
+          "properties": {
+            "Thickness": { "Float32": 0.04 },
+            "StrokeSizingMode": { "Enum": 1 }
+          }
+        }
+      ]
+    }
+  ]
+}
