@@ -35,7 +35,8 @@
           "properties": {
             "BackgroundTransparency": { "Float32": 1 },
             "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
-            "Size": { "UDim2": [[1, 0], [1, 0]] }
+            "Size": { "UDim2": [[1, 0], [1, 0]] },
+            "SizeConstraint": { "Enum": 2 }
           },
           "children": [
             {
@@ -270,7 +271,7 @@
             "BackgroundColor3": { "Color3": [1, 1, 1] },
             "BorderSizePixel": { "Int32": 0 },
             "Size": { "UDim2": [[1, 0], [1, 0]] },
-            "ZIndex": { "Int32": 2 }
+            "ZIndex": { "Int32": 0 }
           },
           "children": [
             {
@@ -286,7 +287,7 @@
               "properties": {
                 "Offset": { "Vector2": [-1, 0] },
                 "Rotation": { "Float32": 20 },
-                "Transparency": { "NumberSequence": { "keypoints": [{ "time": 0, "value": 1, "envelope": 0 }, { "time": 0.42, "value": 1, "envelope": 0 }, { "time": 0.5, "value": 0.35, "envelope": 0 }, { "time": 0.58, "value": 1, "envelope": 0 }, { "time": 1, "value": 1, "envelope": 0 }] } }
+                "Transparency": { "NumberSequence": { "keypoints": [{ "time": 0, "value": 1, "envelope": 0 }, { "time": 0.44, "value": 1, "envelope": 0 }, { "time": 0.5, "value": 0.2, "envelope": 0 }, { "time": 0.56, "value": 1, "envelope": 0 }, { "time": 1, "value": 1, "envelope": 0 }] } }
               }
             }
           ]
