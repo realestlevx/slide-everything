@@ -59,6 +59,11 @@ local BOUNCE_IN_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDire
 local FADE_OUT_TIME = 0.2
 local FADE_OUT_SCALE_INFO = TweenInfo.new(FADE_OUT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local FADE_OUT_SCALE = 0.8
+local SHINE_DELAY = 0.3
+local SHINE_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+-- Gradient offsets where the shine band is fully off the left / right edge
+local SHINE_START_OFFSET = Vector2.new(-1, 0)
+local SHINE_END_OFFSET = Vector2.new(1, 0)
 
 local function getScreenGui()
 	local screenGui = PlayerGui:FindFirstChild("ProximityPrompts")
@@ -124,6 +129,12 @@ local function createPrompt(prompt, inputType, gui)
 	bounceScale.Parent = frame
 	local bounceInTween = TweenService:Create(bounceScale, BOUNCE_IN_INFO, { Scale = 1 })
 	local fadeOutScaleTween = TweenService:Create(bounceScale, FADE_OUT_SCALE_INFO, { Scale = FADE_OUT_SCALE })
+
+	-- Shine line that sweeps across the prompt shortly after it opens
+	local shine = frame:FindFirstChild("Shine")
+	local shineGradient = shine and shine:FindFirstChildOfClass("UIGradient")
+	local shineTween = shineGradient and TweenService:Create(shineGradient, SHINE_INFO, { Offset = SHINE_END_OFFSET })
+	local shineThread = nil
 
 	-- Tweens for Frame and children
 	local backgroundTransparency = frame.BackgroundTransparency
@@ -373,15 +384,35 @@ local function createPrompt(prompt, inputType, gui)
 		table.insert(tweensForButtonHoldEnd, TweenService:Create(circleBar.Progress, tweenInfoInstant, { Value = 0 }))
 	end
 
+	local function cancelShine()
+		if shineThread then
+			task.cancel(shineThread)
+			shineThread = nil
+		end
+		if shineTween then
+			shineTween:Cancel()
+			shineGradient.Offset = SHINE_START_OFFSET
+		end
+	end
+
 	local function playFadeIn()
 		bounceScale.Scale = 0
 		bounceInTween:Play()
 		for _, tween in ipairs(tweensForFadeIn) do
 			tween:Play()
 		end
+
+		if shineTween then
+			cancelShine()
+			shineThread = task.delay(SHINE_DELAY, function()
+				shineThread = nil
+				shineTween:Play()
+			end)
+		end
 	end
 
 	local function playFadeOut()
+		cancelShine()
 		fadeOutScaleTween:Play()
 		for _, tween in ipairs(tweensForFadeOut) do
 			tween:Play()
