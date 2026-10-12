@@ -228,6 +228,7 @@
             "BackgroundTransparency": { "Float32": 1 },
             "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
             "FontFace": { "Font": { "family": "rbxassetid://12187373327", "weight": "Bold", "style": "Normal" } },
+            "LineHeight": { "Float32": 3 },
             "Position": { "UDim2": [[0.45, -24], [0, 0]] },
             "RichText": { "Bool": true },
             "Size": { "UDim2": [[0.64, 0], [1, 0]] },
