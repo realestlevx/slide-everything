@@ -36,7 +36,8 @@
             "BackgroundTransparency": { "Float32": 1 },
             "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
             "Size": { "UDim2": [[1, 0], [1, 0]] },
-            "SizeConstraint": { "Enum": 2 }
+            "SizeConstraint": { "Enum": 2 },
+            "ZIndex": { "Int32": 2 }
           },
           "children": [
             {
@@ -48,7 +49,8 @@
                 "BackgroundTransparency": { "Float32": 1 },
                 "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                 "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
-                "Size": { "UDim2": [[1.2, 0], [1.2, 0]] }
+                "Size": { "UDim2": [[1.2, 0], [1.2, 0]] },
+                "ZIndex": { "Int32": 2 }
               },
               "children": [
                 {
@@ -59,7 +61,8 @@
                     "BackgroundTransparency": { "Float32": 1 },
                     "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                     "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
-                    "Size": { "UDim2": [[1, -14], [1, -14]] }
+                    "Size": { "UDim2": [[1, -14], [1, -14]] },
+                    "ZIndex": { "Int32": 2 }
                   },
                   "children": [
                     {
@@ -69,7 +72,8 @@
                         "BackgroundTransparency": { "Float32": 1 },
                         "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                         "ClipsDescendants": { "Bool": true },
-                        "Size": { "UDim2": [[0.5, 0], [1, 0]] }
+                        "Size": { "UDim2": [[0.5, 0], [1, 0]] },
+                        "ZIndex": { "Int32": 2 }
                       },
                       "children": [
                         {
@@ -79,7 +83,8 @@
                             "BackgroundTransparency": { "Float32": 1 },
                             "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                             "Image": { "String": "rbxasset://textures/ui/Controls/RadialFill.png" },
-                            "Size": { "UDim2": [[2, 0], [1, 0]] }
+                            "Size": { "UDim2": [[2, 0], [1, 0]] },
+                            "ZIndex": { "Int32": 2 }
                           },
                           "children": [
                             {
@@ -102,7 +107,8 @@
                         "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                         "ClipsDescendants": { "Bool": true },
                         "Position": { "UDim2": [[0.5, 0], [0, 0]] },
-                        "Size": { "UDim2": [[0.5, 0], [1, 0]] }
+                        "Size": { "UDim2": [[0.5, 0], [1, 0]] },
+                        "ZIndex": { "Int32": 2 }
                       },
                       "children": [
                         {
@@ -113,7 +119,8 @@
                             "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                             "Image": { "String": "rbxasset://textures/ui/Controls/RadialFill.png" },
                             "Position": { "UDim2": [[-1, 0], [0, 0]] },
-                            "Size": { "UDim2": [[2, 0], [1, 0]] }
+                            "Size": { "UDim2": [[2, 0], [1, 0]] },
+                            "ZIndex": { "Int32": 2 }
                           },
                           "children": [
                             {
@@ -144,7 +151,8 @@
                     "Image": { "String": "rbxasset://textures/ui/GuiImagePlaceholder.png" },
                     "ImageTransparency": { "Float32": 1 },
                     "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
-                    "Size": { "UDim2": [[1, -24], [1, -24]] }
+                    "Size": { "UDim2": [[1, -24], [1, -24]] },
+                    "ZIndex": { "Int32": 2 }
                   },
                   "children": [
                     {
@@ -165,7 +173,8 @@
                     "BorderColor3": { "Color3": [0.105882, 0.164706, 0.207843] },
                     "Image": { "String": "rbxasset://textures/ui/Controls/key_single.png" },
                     "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
-                    "Size": { "UDim2": [[1, -44], [1, -42]] }
+                    "Size": { "UDim2": [[1, -44], [1, -42]] },
+                    "ZIndex": { "Int32": 2 }
                   }
                 },
                 {
@@ -178,7 +187,8 @@
                     "Image": { "String": "rbxasset://textures/ui/Controls/shift.png" },
                     "Position": { "UDim2": [[0.5, 0], [0.5, 0]] },
                     "Size": { "UDim2": [[1, -48], [1, -48]] },
-                    "Visible": { "Bool": false }
+                    "Visible": { "Bool": false },
+                    "ZIndex": { "Int32": 2 }
                   }
                 },
                 {
@@ -193,7 +203,8 @@
                     "Text": { "String": "E" },
                     "TextColor3": { "Color3": [1, 1, 1] },
                     "TextSize": { "Float32": 27 },
-                    "TextWrapped": { "Bool": true }
+                    "TextWrapped": { "Bool": true },
+                    "ZIndex": { "Int32": 2 }
                   }
                 },
                 {
@@ -218,7 +229,8 @@
             "TextColor3": { "Color3": [0.698039, 0.698039, 0.698039] },
             "TextSize": { "Float32": 14 },
             "TextXAlignment": { "Enum": 0 },
-            "Visible": { "Bool": false }
+            "Visible": { "Bool": false },
+            "ZIndex": { "Int32": 2 }
           }
         },
         {
@@ -237,7 +249,8 @@
             "TextScaled": { "Bool": true },
             "TextSize": { "Float32": 19 },
             "TextWrapped": { "Bool": true },
-            "TextXAlignment": { "Enum": 0 }
+            "TextXAlignment": { "Enum": 0 },
+            "ZIndex": { "Int32": 2 }
           },
           "children": [
             {
@@ -272,7 +285,7 @@
             "BackgroundColor3": { "Color3": [1, 1, 1] },
             "BorderSizePixel": { "Int32": 0 },
             "Size": { "UDim2": [[1, 0], [1, 0]] },
-            "ZIndex": { "Int32": 0 }
+            "ZIndex": { "Int32": 1 }
           },
           "children": [
             {
@@ -288,7 +301,7 @@
               "properties": {
                 "Offset": { "Vector2": [-1, 0] },
                 "Rotation": { "Float32": 20 },
-                "Transparency": { "NumberSequence": { "keypoints": [{ "time": 0, "value": 1, "envelope": 0 }, { "time": 0.44, "value": 1, "envelope": 0 }, { "time": 0.5, "value": 0.2, "envelope": 0 }, { "time": 0.56, "value": 1, "envelope": 0 }, { "time": 1, "value": 1, "envelope": 0 }] } }
+                "Transparency": { "NumberSequence": { "keypoints": [{ "time": 0, "value": 1, "envelope": 0 }, { "time": 0.35, "value": 1, "envelope": 0 }, { "time": 0.5, "value": 0.2, "envelope": 0 }, { "time": 0.65, "value": 1, "envelope": 0 }, { "time": 1, "value": 1, "envelope": 0 }] } }
               }
             }
           ]
