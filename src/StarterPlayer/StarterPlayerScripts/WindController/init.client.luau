@@ -12,7 +12,7 @@ local RunService = game:GetService("RunService")
 
 local WIND_DIRECTION = Vector3.new(1,0,0.3)
 local WIND_SPEED = 20
-local WIND_POWER = 0.5
+local WIND_POWER = 0.7
 
 
 local WindLines = require(script.WindLines)

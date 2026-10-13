@@ -16,9 +16,9 @@ local OFFSET = Vector3.new(0,0.1,0)
 local module = {
 	UpdateQueue = table.create(10);
 	UpdateConnection = nil :: RBXScriptConnection?;
-	Lifetime = 3;
+	Lifetime = 3.5;
 	Direction = Vector3.new(1,0,0);
-	Speed = 6;
+	Speed = 10;
 	LastSpawned = os.clock();
 }
 
