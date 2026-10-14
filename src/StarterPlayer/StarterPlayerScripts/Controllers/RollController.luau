@@ -2,12 +2,15 @@ local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+
+local PromptController = require(script.Parent.PromptController)
 
 local RollResult = ReplicatedStorage.Remotes.RollResult
 local LocalPlayer = Players.LocalPlayer
@@ -37,10 +40,12 @@ local spinTokens: { [Folder]: number } = {} -- Bumped to stop a spin early
 local spinning: { [Folder]: boolean } = {}
 local results: { [Folder]: string } = {} -- The server's pick for the current spin
 local previews: { [Folder]: MeshPart } = {} -- The owner's local item: spinning, then their copy of the result
+local rollPrompts: { [Folder]: ProximityPrompt } = {} -- Hidden while their spin plays
 local revealTweens: { [Folder]: { Tween } } = {}
 local leverRestCFrames: { [BasePart]: CFrame } = {}
 local floating: { [BasePart]: CFrame } = {} -- Item -> its resting CFrame
-local originalFov: number? = nil -- Set while the camera is zoomed in for a roll
+local restingFov: number? = nil -- The player's normal FOV, kept until the snap back has fully finished
+local zoomed = false
 
 local RollController = {}
 
@@ -129,6 +134,15 @@ local function setRollingParticles(place: Folder, enabled: boolean)
 	end
 end
 
+-- Played from the client, so only the owner hears them. Replaying restarts the sound instead of
+-- stacking copies, which keeps the fast ticks at the start of a spin from piling up
+local function playSound(name: string)
+	local sound = find(SoundService, "SFX", "Rolling", name)
+	if sound then
+		sound:Play()
+	end
+end
+
 -- One burst from every emitter in Roll_Place's Finish attachment, sized by its EmitCount attribute
 local function burstFinishParticles(place: Folder)
 	local attachment = find(place, "RollStand_1", "Roll_Place", "Finish")
@@ -143,19 +157,38 @@ local function burstFinishParticles(place: Folder)
 	end
 end
 
--- A newer tween on FieldOfView replaces the running one, so snapping back cuts the zoom short
+-- A newer tween on FieldOfView replaces the running one, so snapping back cuts the zoom short.
+-- The resting FOV is only captured from a camera at rest, never from one still snapping back,
+-- otherwise rolling again mid-snap would lower it a bit more every time
 local function zoomCamera()
 	local camera = workspace.CurrentCamera
-	originalFov = originalFov or camera.FieldOfView
-	TweenService:Create(camera, FOV_ZOOM_IN, { FieldOfView = originalFov - FOV_ZOOM }):Play()
+	restingFov = restingFov or camera.FieldOfView
+	zoomed = true
+	TweenService:Create(camera, FOV_ZOOM_IN, { FieldOfView = restingFov - FOV_ZOOM }):Play()
 end
 
 local function restoreCamera()
-	if not originalFov then
+	if not zoomed then
 		return
 	end
-	TweenService:Create(workspace.CurrentCamera, FOV_SNAP_BACK, { FieldOfView = originalFov }):Play()
-	originalFov = nil
+	zoomed = false
+
+	local snapBack = TweenService:Create(workspace.CurrentCamera, FOV_SNAP_BACK, { FieldOfView = restingFov })
+	snapBack.Completed:Connect(function(state)
+		-- Cancelled means a new roll took over mid-snap and still needs the same resting FOV
+		if state == Enum.PlaybackState.Completed and not zoomed then
+			restingFov = nil
+		end
+	end)
+	snapBack:Play()
+end
+
+local function showRollPrompt(place: Folder)
+	local prompt = rollPrompts[place]
+	if prompt then
+		rollPrompts[place] = nil
+		PromptController.SetHidden(place, prompt, false)
+	end
 end
 
 -- Inside and its light only change color on the owner's screen; everyone else sees the stand's own color
@@ -174,6 +207,7 @@ local function cancelSpin(place: Folder)
 	spinning[place] = nil
 	clearPreview(place)
 	setRollingParticles(place, false)
+	showRollPrompt(place)
 end
 
 local function showPreview(place: Folder, item: Items.Item)
@@ -202,7 +236,9 @@ local function reveal(place: Folder, item: Items.Item)
 	spinning[place] = nil
 	setRollingParticles(place, false)
 	burstFinishParticles(place)
+	playSound("Reveal")
 	restoreCamera()
+	showRollPrompt(place)
 
 	local tweens = {}
 	local preview = previews[place]
@@ -284,16 +320,19 @@ local function spin(place: Folder)
 
 		previous = randomFiller(previous)
 		showPreview(place, previous)
+		playSound("Tick")
 	end
 end
 
 -- Starts the moment the prompt fires instead of waiting a round trip for the server.
 -- Mirrors the server's checks so it only spins for rolls the server will accept
-local function startRoll(place: Folder)
+local function startRoll(place: Folder, prompt: ProximityPrompt)
 	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] then
 		return
 	end
 
+	rollPrompts[place] = prompt
+	PromptController.SetHidden(place, prompt, true)
 	results[place] = nil
 	-- A fade still running from the last reveal would paint over the black
 	for _, tween in revealTweens[place] or {} do
@@ -322,7 +361,7 @@ function RollController.Start()
 		end
 		for _, place in places do
 			if prompt:IsDescendantOf(place) then
-				startRoll(place)
+				startRoll(place, prompt)
 			end
 		end
 	end)
