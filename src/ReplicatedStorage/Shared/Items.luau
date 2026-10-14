@@ -1,9 +1,9 @@
-export type Rarity = "Common" | "Uncommon" | "Rare" | "Epic" | "Legendary"
+local Rarities = require(script.Parent.Rarities)
 
 export type Item = {
 	Id: string,
 	Name: string,
-	Rarity: Rarity,
+	Rarity: Rarities.Rarity,
 	BaseMoneyPerStud: number,
 	MeshName: string, -- MeshPart in ReplicatedStorage.Items (with its Hitbox)
 }

@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local Places = require(ReplicatedStorage.Shared.Places)
 
 local SPAWN_OFFSET = Vector3.new(0, 3, 0)
 
@@ -108,13 +109,10 @@ local function onPlayerRemoving(player: Player)
 end
 
 function PlaceService.Start()
-	-- Any Workspace folder named Place<N> is a claimable place
-	for _, child in workspace:GetChildren() do
-		if child:IsA("Folder") and child.Name:match("^Place%d+$") then
-			table.insert(places, child)
-			defaultImages[child] = (getBillboard(child) :: any).ImageLabel.Image
-			getBillboard(child).Enabled = false
-		end
+	places = Places.GetAll()
+	for _, place in places do
+		defaultImages[place] = (getBillboard(place) :: any).ImageLabel.Image
+		getBillboard(place).Enabled = false
 	end
 
 	for _, player in Players:GetPlayers() do
