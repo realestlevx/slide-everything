@@ -1,10 +1,13 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local ProfileStore = require(ServerScriptService.ServerPackages.ProfileStore)
+local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 
 local PROFILE_TEMPLATE = {
 	Money = 0,
+	MoneyPerSecond = 0,
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
@@ -13,26 +16,7 @@ local PlayerStore = ProfileStore.New("PlayerStore", PROFILE_TEMPLATE)
 
 local Profiles: { [Player]: typeof(PlayerStore:StartSessionAsync("")) } = {}
 
-local PlayerData = {}
-
-local MONEY_SUFFIXES = { "K", "M", "B", "T", "Qa", "Qi" }
-
--- 950 -> "$950", 1250 -> "$1.2K", 3000000 -> "$3M"
-local function formatMoney(amount: number): string
-	local sign = if amount < 0 then "-" else ""
-	amount = math.floor(math.abs(amount))
-
-	local suffixIndex = math.min(math.floor(math.log10(math.max(amount, 1)) / 3), #MONEY_SUFFIXES)
-	if suffixIndex == 0 then
-		return `{sign}${amount}`
-	end
-
-	-- Truncate to one decimal so 999999 shows as 999.9K rather than rounding up to 1000K
-	local tenths = math.floor(amount * 10 / 1000 ^ suffixIndex)
-	local short = if tenths % 10 == 0 then `{tenths // 10}` else string.format("%.1f", tenths / 10)
-
-	return `{sign}${short}{MONEY_SUFFIXES[suffixIndex]}`
-end
+local PlayerDataService = {}
 
 local function createLeaderstats(player: Player, data: Data)
 	local leaderstats = Instance.new("Folder")
@@ -40,7 +24,7 @@ local function createLeaderstats(player: Player, data: Data)
 
 	local money = Instance.new("StringValue")
 	money.Name = "Money"
-	money.Value = formatMoney(data.Money)
+	money.Value = FormatMoney(data.Money)
 	money.Parent = leaderstats
 
 	leaderstats.Parent = player
@@ -77,36 +61,48 @@ local function onPlayerAdded(player: Player)
 	if player.Parent == Players then
 		Profiles[player] = profile
 		createLeaderstats(player, profile.Data)
+		-- Not a leaderstat; exposed as an attribute so other services and clients can read it
+		player:SetAttribute("MoneyPerSecond", profile.Data.MoneyPerSecond)
 	else
 		profile:EndSession()
 	end
 end
 
-function PlayerData.Get(player: Player): Data?
+function PlayerDataService.Get(player: Player): Data?
 	local profile = Profiles[player]
 	return profile and profile.Data
 end
 
-function PlayerData.SetMoney(player: Player, amount: number)
-	local data = PlayerData.Get(player)
+function PlayerDataService.SetMoney(player: Player, amount: number)
+	local data = PlayerDataService.Get(player)
 	if not data then
 		return
 	end
 
 	data.Money = amount
-	updateLeaderstat(player, "Money", formatMoney(amount))
+	updateLeaderstat(player, "Money", FormatMoney(amount))
 end
 
-function PlayerData.AddMoney(player: Player, amount: number)
-	local data = PlayerData.Get(player)
+function PlayerDataService.AddMoney(player: Player, amount: number)
+	local data = PlayerDataService.Get(player)
 	if not data then
 		return
 	end
 
-	PlayerData.SetMoney(player, data.Money + amount)
+	PlayerDataService.SetMoney(player, data.Money + amount)
 end
 
-function PlayerData.Start()
+function PlayerDataService.SetMoneyPerSecond(player: Player, amount: number)
+	local data = PlayerDataService.Get(player)
+	if not data then
+		return
+	end
+
+	data.MoneyPerSecond = amount
+	player:SetAttribute("MoneyPerSecond", amount)
+end
+
+function PlayerDataService.Start()
 	for _, player in Players:GetPlayers() do
 		task.spawn(onPlayerAdded, player)
 	end
@@ -120,4 +116,4 @@ function PlayerData.Start()
 	end)
 end
 
-return PlayerData
+return PlayerDataService
