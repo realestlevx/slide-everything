@@ -67,9 +67,26 @@ function Rolling.CreateDisplay(item: Items.Item, rollPlace: BasePart): MeshPart
 	return display
 end
 
+-- Spinning items' fill, and the owner's view of the stand's Inside while rolling
+Rolling.ROLLING_COLOR = Color3.new(0, 0, 0)
+
+-- Empties a stand for a new roll. The server does it for everyone; the owner's client also
+-- does it straight away so the old result doesn't linger while the roll request travels
+function Rolling.ClearStand(stand: Instance)
+	local rolledItem = stand:FindFirstChild("RolledItem")
+	if rolledItem then
+		rolledItem:Destroy()
+	end
+	local rollPlace = stand:FindFirstChild("Roll_Place")
+	local billboard = rollPlace and rollPlace:FindFirstChild("Stuff_StatsDisplay") :: BillboardGui?
+	if billboard then
+		billboard.Enabled = false
+	end
+end
+
 -- Black silhouette with a white outline while the items are spinning
 Rolling.ROLLING_HIGHLIGHT = {
-	FillColor = Color3.new(0, 0, 0),
+	FillColor = Rolling.ROLLING_COLOR,
 	FillTransparency = 0,
 	OutlineColor = Color3.new(1, 1, 1),
 	OutlineTransparency = 0,

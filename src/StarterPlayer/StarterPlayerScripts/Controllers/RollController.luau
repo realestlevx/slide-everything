@@ -1,12 +1,18 @@
+local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
+local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 
-local RollStarted = ReplicatedStorage.Remotes.RollStarted
+local RollResult = ReplicatedStorage.Remotes.RollResult
+local LocalPlayer = Players.LocalPlayer
+
+local RESULT_TIMEOUT = 5 -- Stop a spin whose result never comes (the server turned the roll down)
 
 local LEVER_ANGLE = math.rad(45) -- Pulled towards the player
 local LEVER_BOUNCE_ANGLE = math.rad(-15) -- Swings back past upright before settling
@@ -18,6 +24,9 @@ local OUTCOME_FADE = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirect
 local BOB_HEIGHT = 0.25 -- Studs above and below the center
 local BOB_SPEED = math.pi -- Radians per second, one full bob every 2 seconds
 local TURN_SPEED = math.pi / 2 -- Radians per second, one full turn every 4 seconds
+local FOV_ZOOM = 8 -- How far the field of view drops while rolling
+local FOV_ZOOM_IN = TweenInfo.new(Rolling.SPIN_DURATION, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+local FOV_SNAP_BACK = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 local allItems: { Items.Item } = {}
 for _, item in Items do
@@ -25,9 +34,13 @@ for _, item in Items do
 end
 
 local spinTokens: { [Folder]: number } = {} -- Bumped to stop a spin early
-local previews: { [Folder]: MeshPart } = {}
+local spinning: { [Folder]: boolean } = {}
+local results: { [Folder]: string } = {} -- The server's pick for the current spin
+local previews: { [Folder]: MeshPart } = {} -- The owner's local item: spinning, then their copy of the result
+local revealTweens: { [Folder]: { Tween } } = {}
 local leverRestCFrames: { [BasePart]: CFrame } = {}
 local floating: { [BasePart]: CFrame } = {} -- Item -> its resting CFrame
+local originalFov: number? = nil -- Set while the camera is zoomed in for a roll
 
 local RollController = {}
 
@@ -103,9 +116,64 @@ local function clearPreview(place: Folder)
 	end
 end
 
+-- Every emitter in Roll_Place's attachment runs while the spin plays (locally, so only the owner sees it)
+local function setRollingParticles(place: Folder, enabled: boolean)
+	local attachment = find(place, "RollStand_1", "Roll_Place", "ParticleEmmiterAttachment")
+	if not attachment then
+		return
+	end
+	for _, child in attachment:GetChildren() do
+		if child:IsA("ParticleEmitter") then
+			child.Enabled = enabled
+		end
+	end
+end
+
+-- One burst from every emitter in Roll_Place's Finish attachment, sized by its EmitCount attribute
+local function burstFinishParticles(place: Folder)
+	local attachment = find(place, "RollStand_1", "Roll_Place", "Finish")
+	if not attachment then
+		return
+	end
+	for _, child in attachment:GetChildren() do
+		local count = child:GetAttribute("EmitCount")
+		if child:IsA("ParticleEmitter") and typeof(count) == "number" then
+			child:Emit(count)
+		end
+	end
+end
+
+-- A newer tween on FieldOfView replaces the running one, so snapping back cuts the zoom short
+local function zoomCamera()
+	local camera = workspace.CurrentCamera
+	originalFov = originalFov or camera.FieldOfView
+	TweenService:Create(camera, FOV_ZOOM_IN, { FieldOfView = originalFov - FOV_ZOOM }):Play()
+end
+
+local function restoreCamera()
+	if not originalFov then
+		return
+	end
+	TweenService:Create(workspace.CurrentCamera, FOV_SNAP_BACK, { FieldOfView = originalFov }):Play()
+	originalFov = nil
+end
+
+-- Inside and its light only change color on the owner's screen; everyone else sees the stand's own color
+local function getGlowParts(place: Folder): { Instance }
+	local inside = find(place, "RollStand_1", "Inside")
+	local light = inside and inside:FindFirstChild("SurfaceLight")
+	return { inside, light }
+end
+
 local function cancelSpin(place: Folder)
+	-- Other places' owners changing must not end this player's zoom
+	if spinning[place] then
+		restoreCamera()
+	end
 	spinTokens[place] = (spinTokens[place] or 0) + 1
+	spinning[place] = nil
 	clearPreview(place)
+	setRollingParticles(place, false)
 end
 
 local function showPreview(place: Folder, item: Items.Item)
@@ -126,26 +194,37 @@ local function showPreview(place: Folder, item: Items.Item)
 	previews[place] = preview
 	startFloating(preview)
 	TweenService:Create(preview, POP, { Size = fullSize }):Play()
+end
 
-	local billboard = rollPlace:FindFirstChild("Stuff_StatsDisplay")
+-- The owner's reveal runs on their own timing, the moment their last item lands. Their preview stays
+-- as their copy of the result; the server's copy is for everyone else
+local function reveal(place: Folder, item: Items.Item)
+	spinning[place] = nil
+	setRollingParticles(place, false)
+	burstFinishParticles(place)
+	restoreCamera()
+
+	local tweens = {}
+	local preview = previews[place]
+	local highlight = preview and preview:FindFirstChildOfClass("Highlight")
+	if highlight then
+		table.insert(tweens, TweenService:Create(highlight, OUTCOME_FADE, Rolling.GetOutcomeHighlight(item)))
+	end
+
+	local rarityColor = Rarities[item.Rarity].Color
+	for _, glow in getGlowParts(place) do
+		table.insert(tweens, TweenService:Create(glow, OUTCOME_FADE, { Color = rarityColor }))
+	end
+
+	for _, tween in tweens do
+		tween:Play()
+	end
+	revealTweens[place] = tweens
+
+	local billboard = find(place, "RollStand_1", "Roll_Place", "Stuff_StatsDisplay")
 	if billboard then
 		Rolling.ShowStats(billboard, item)
 	end
-end
-
--- The server's item arrives with the outcome highlight; start it black so the owner sees it fade in
-local function fadeToOutcome(item: Instance)
-	local highlight: any = item:FindFirstChildOfClass("Highlight")
-	if not highlight then
-		return
-	end
-
-	local outcome = {}
-	for property, rollingValue in Rolling.ROLLING_HIGHLIGHT do
-		outcome[property] = highlight[property]
-		highlight[property] = rollingValue
-	end
-	TweenService:Create(highlight, OUTCOME_FADE, outcome):Play()
 end
 
 local function randomFiller(previous: Items.Item?): Items.Item
@@ -156,9 +235,29 @@ local function randomFiller(previous: Items.Item?): Items.Item
 	return item
 end
 
-local function spin(place: Folder, resultId: string)
+-- The server's pick normally arrived long before the last item
+local function waitForResult(place: Folder, token: number): Items.Item?
+	local deadline = os.clock() + RESULT_TIMEOUT
+	while not results[place] and spinTokens[place] == token and os.clock() < deadline do
+		task.wait()
+	end
+	if spinTokens[place] ~= token then
+		return nil
+	end
+
+	local resultId = results[place]
+	if not resultId then
+		cancelSpin(place)
+		return nil
+	end
+	return Items[resultId]
+end
+
+local function spin(place: Folder)
 	local token = (spinTokens[place] or 0) + 1
 	spinTokens[place] = token
+	spinning[place] = true
+	setRollingParticles(place, true)
 
 	local startTime = os.clock()
 	local previous
@@ -174,36 +273,82 @@ local function spin(place: Folder, resultId: string)
 			return
 		end
 
-		local item = if step == Rolling.SPIN_STEPS then Items[resultId] else randomFiller(previous)
-		showPreview(place, item)
-		previous = item
+		if step == Rolling.SPIN_STEPS then
+			local result = waitForResult(place, token)
+			if result then
+				showPreview(place, result)
+				reveal(place, result)
+			end
+			return
+		end
+
+		previous = randomFiller(previous)
+		showPreview(place, previous)
 	end
 end
 
+-- Starts the moment the prompt fires instead of waiting a round trip for the server.
+-- Mirrors the server's checks so it only spins for rolls the server will accept
+local function startRoll(place: Folder)
+	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] then
+		return
+	end
+
+	results[place] = nil
+	-- A fade still running from the last reveal would paint over the black
+	for _, tween in revealTweens[place] or {} do
+		tween:Cancel()
+	end
+	revealTweens[place] = nil
+	clearPreview(place)
+	local stand = find(place, "RollStand_1")
+	if stand then
+		Rolling.ClearStand(stand)
+	end
+	for _, glow in getGlowParts(place) do
+		glow.Color = Rolling.ROLLING_COLOR
+	end
+	zoomCamera()
+	task.spawn(pullLever, place)
+	task.spawn(spin, place)
+end
+
 function RollController.Start()
-	RollStarted.OnClientEvent:Connect(function(place: Folder, resultId: string)
-		task.spawn(pullLever, place)
-		task.spawn(spin, place, resultId)
+	local places = Places.GetAll()
+
+	ProximityPromptService.PromptTriggered:Connect(function(prompt)
+		if prompt.Name ~= "RollProximity" then
+			return
+		end
+		for _, place in places do
+			if prompt:IsDescendantOf(place) then
+				startRoll(place)
+			end
+		end
+	end)
+
+	RollResult.OnClientEvent:Connect(function(place: Folder, resultId: string)
+		results[place] = resultId
 	end)
 
 	RunService.Heartbeat:Connect(updateFloating)
 
-	for _, place in Places.GetAll() do
+	for _, place in places do
 		for _, descendant in place:GetDescendants() do
 			if descendant.Name == "RolledItem" then
 				startFloating(descendant)
 			end
 		end
 
-		-- The server's real item takes over from the local preview (and streams in later for others)
 		place.DescendantAdded:Connect(function(descendant)
-			if descendant.Name == "RolledItem" then
-				local wasSpinning = previews[place] ~= nil
-				cancelSpin(place)
+			if descendant.Name ~= "RolledItem" then
+				return
+			end
+			-- The owner already shows their own copy, so the server's would just sit on top of it
+			if previews[place] then
+				descendant:Destroy()
+			else
 				startFloating(descendant)
-				if wasSpinning then
-					fadeToOutcome(descendant)
-				end
 			end
 		end)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()

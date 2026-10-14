@@ -4,10 +4,7 @@ local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 
-local RollStarted = ReplicatedStorage.Remotes.RollStarted
-
--- Lands just after the owner's spin ends, so the real item replaces their preview seamlessly
-local FINISH_DELAY = Rolling.SPIN_DURATION + 0.25
+local RollResult = ReplicatedStorage.Remotes.RollResult
 
 local rng = Random.new()
 local rolling: { [Folder]: boolean } = {}
@@ -16,19 +13,14 @@ local rollTokens: { [Folder]: number } = {} -- Bumped to cancel a roll that's st
 local RollService = {}
 
 local function clearStand(place: Folder)
-	local stand = (place :: any).RollStand_1
-	local rolledItem = stand:FindFirstChild("RolledItem")
-	if rolledItem then
-		rolledItem:Destroy()
-	end
-	stand.Roll_Place.Stuff_StatsDisplay.Enabled = false
+	Rolling.ClearStand((place :: any).RollStand_1)
 end
 
 local function finishRoll(place: Folder, item: Items.Item)
 	local stand = (place :: any).RollStand_1
+	-- No highlight here: only the owner's local copy gets one (they're costly and capped per client)
 	local display = Rolling.CreateDisplay(item, stand.Roll_Place)
 	display.Name = "RolledItem"
-	Rolling.AddHighlight(display, Rolling.GetOutcomeHighlight(item))
 	display.Parent = stand
 	Rolling.ShowStats(stand.Roll_Place.Stuff_StatsDisplay, item)
 end
@@ -45,10 +37,13 @@ local function onRollTriggered(place: Folder, player: Player)
 
 	local item = Rolling.Pick(rng)
 	clearStand(place)
-	-- Only the owner watches the spin; everyone else just sees the result land
-	RollStarted:FireClient(player, place, item.Id)
+	-- The owner's client is already spinning; it only needs the result for the last item.
+	-- Everyone else just sees the result land
+	RollResult:FireClient(player, place, item.Id)
 
-	task.delay(FINISH_DELAY, function()
+	-- The owner started spinning before this request arrived, so everyone else sees the result
+	-- land as the owner's spin ends
+	task.delay(Rolling.SPIN_DURATION, function()
 		if rollTokens[place] ~= token then
 			return
 		end
