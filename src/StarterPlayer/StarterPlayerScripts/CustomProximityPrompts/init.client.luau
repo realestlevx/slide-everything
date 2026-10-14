@@ -2,6 +2,7 @@ local UserInputService = game:GetService("UserInputService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -59,11 +60,19 @@ local BOUNCE_IN_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDire
 local FADE_OUT_TIME = 0.2
 local FADE_OUT_SCALE_INFO = TweenInfo.new(FADE_OUT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local FADE_OUT_SCALE = 0.8
+-- Quick squash when the prompt is triggered, like a button being pushed in, before it fades out
+local PRESS_INFO = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local PRESS_SCALE = 0.85
 local SHINE_DELAY = 0.3
 local SHINE_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 -- Gradient offsets where the shine band is fully off the left / right edge
 local SHINE_START_OFFSET = Vector2.new(-1, 0)
 local SHINE_END_OFFSET = Vector2.new(1, 0)
+-- Highlight strength up close. It stays at full strength out to HIGHLIGHT_FADE_START studs, then
+-- fades to fully clear at the edge of the prompt's range
+local HIGHLIGHT_FILL_TRANSPARENCY = 0.9
+local HIGHLIGHT_OUTLINE_TRANSPARENCY = 0
+local HIGHLIGHT_FADE_START = 6
 
 local function getScreenGui()
 	local screenGui = PlayerGui:FindFirstChild("ProximityPrompts")
@@ -74,6 +83,60 @@ local function getScreenGui()
 		screenGui.Parent = PlayerGui
 	end
 	return screenGui
+end
+
+local function getWorldPosition(instance)
+	if instance:IsA("Attachment") then
+		return instance.WorldPosition
+	elseif instance:IsA("BasePart") then
+		return instance.Position
+	elseif instance:IsA("Model") then
+		return instance:GetPivot().Position
+	end
+	return nil
+end
+
+-- Outlines whatever the prompt belongs to while it's in range, fading out the farther away the player
+-- gets. Made on the client, so only this player sees it, and destroyed when the prompt hides instead
+-- of being kept around disabled. Returns the function that removes it
+local function createHighlight(prompt)
+	local holder = prompt.Parent
+	local target = holder and holder.Parent
+	if target == nil then
+		return function() end
+	end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "PromptHighlight"
+	highlight.FillColor = Color3.new(1, 1, 1)
+	highlight.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY
+	highlight.OutlineColor = Color3.new(1, 1, 1)
+	highlight.OutlineTransparency = HIGHLIGHT_OUTLINE_TRANSPARENCY
+
+	local function updateFade()
+		local character = LocalPlayer.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local position = getWorldPosition(holder)
+		if root == nil or position == nil then
+			return
+		end
+
+		local distance = (root.Position - position).Magnitude
+		local fadeRange = math.max(prompt.MaxActivationDistance - HIGHLIGHT_FADE_START, 0.01)
+		local fade = math.clamp((distance - HIGHLIGHT_FADE_START) / fadeRange, 0, 1)
+		highlight.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY + (1 - HIGHLIGHT_FILL_TRANSPARENCY) * fade
+		highlight.OutlineTransparency = HIGHLIGHT_OUTLINE_TRANSPARENCY + (1 - HIGHLIGHT_OUTLINE_TRANSPARENCY) * fade
+	end
+
+	-- Faded before it's parented so it never flashes in at full strength
+	updateFade()
+	highlight.Parent = target
+	local fadeConnection = RunService.Heartbeat:Connect(updateFade)
+
+	return function()
+		fadeConnection:Disconnect()
+		highlight:Destroy()
+	end
 end
 
 local function setUpCircularProgressBar(bar)
@@ -128,6 +191,9 @@ local function createPrompt(prompt, inputType, gui)
 	bounceScale.Parent = frame
 	local bounceInTween = TweenService:Create(bounceScale, BOUNCE_IN_INFO, { Scale = 1 })
 	local fadeOutScaleTween = TweenService:Create(bounceScale, FADE_OUT_SCALE_INFO, { Scale = FADE_OUT_SCALE })
+	local pressTween = TweenService:Create(bounceScale, PRESS_INFO, { Scale = PRESS_SCALE })
+	local pressThread = nil
+	local releasedDuringPress = false
 
 	-- Shine line that sweeps across the prompt shortly after it opens
 	local shine = frame:FindFirstChild("Shine")
@@ -394,7 +460,15 @@ local function createPrompt(prompt, inputType, gui)
 		end
 	end
 
+	local function cancelPress()
+		if pressThread then
+			task.cancel(pressThread)
+			pressThread = nil
+		end
+	end
+
 	local function playFadeIn()
+		cancelPress()
 		bounceScale.Scale = 0
 		bounceInTween:Play()
 		for _, tween in ipairs(tweensForFadeIn) do
@@ -418,6 +492,32 @@ local function createPrompt(prompt, inputType, gui)
 		end
 	end
 
+	-- Squash the prompt first and only fade it out once the press has landed
+	local function playPress()
+		cancelShine()
+		cancelPress()
+		releasedDuringPress = false
+		pressTween:Play()
+		pressThread = task.delay(PRESS_INFO.Time, function()
+			pressThread = nil
+			if releasedDuringPress then
+				-- Springs back up from the pressed size, like a button letting go
+				bounceInTween:Play()
+			else
+				playFadeOut()
+			end
+		end)
+	end
+
+	-- A click or quick tap lets go before the press has landed, so finish the press first
+	local function playRelease()
+		if pressThread then
+			releasedDuringPress = true
+		else
+			playFadeIn()
+		end
+	end
+
 	local holdBeganConnection
 	local holdEndedConnection
 	local triggeredConnection
@@ -437,9 +537,9 @@ local function createPrompt(prompt, inputType, gui)
 		end)
 	end
 
-	triggeredConnection = prompt.Triggered:Connect(playFadeOut)
+	triggeredConnection = prompt.Triggered:Connect(playPress)
 
-	triggerEndedConnection = prompt.TriggerEnded:Connect(playFadeIn)
+	triggerEndedConnection = prompt.TriggerEnded:Connect(playRelease)
 
 	local function updateUIFromPrompt()
 		-- todo: Use AutomaticSize instead of GetTextSize when that feature becomes available
@@ -508,6 +608,12 @@ local function createPrompt(prompt, inputType, gui)
 		triggerEndedConnection:Disconnect()
 		changedConnection:Disconnect()
 
+		-- The roll prompt hides the moment it's triggered, so let its press land before fading
+		if pressThread then
+			cancelPress()
+			task.wait(PRESS_INFO.Time)
+		end
+
 		playFadeOut()
 
 		task.wait(FADE_OUT_TIME)
@@ -527,9 +633,11 @@ local function onLoad()
 		local gui = getScreenGui()
 
 		local cleanupFunction = createPrompt(prompt, inputType, gui)
+		local removeHighlight = createHighlight(prompt)
 
 		prompt.PromptHidden:Wait()
 
+		removeHighlight()
 		cleanupFunction()
 	end)
 end
