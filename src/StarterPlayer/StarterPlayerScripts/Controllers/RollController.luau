@@ -230,6 +230,7 @@ local function showBuyError(place: Folder)
 end
 
 local function onBought(place: Folder)
+	playSound("Buy")
 	clearPreview(place)
 	local stand = find(place, "RollStand_1")
 	if stand then

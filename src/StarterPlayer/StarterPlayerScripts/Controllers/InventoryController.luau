@@ -26,8 +26,10 @@ local SLOT_KEYS = {
 local EQUIPPED_SCALE = 1.1
 local EQUIPPED_STROKE_COLOR = Color3.new(1, 1, 1)
 local EQUIP_INFO = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local POP_IN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 local inventory: { Items.OwnedItem } = {} -- As the server last sent it
+local received = false -- The first inventory is what the player already had, so it doesn't pop in
 local shown: { Items.OwnedItem } = {} -- The items with a slot, in slot order (unknown ids are skipped)
 local slots: { [string]: ImageButton } = {} -- Uid -> its slot
 local list: Frame? = nil
@@ -80,6 +82,18 @@ local function updateEquipped()
 		TweenService:Create(slot.EquipScale, EQUIP_INFO, { Scale = if isEquipped then EQUIPPED_SCALE else 1 }):Play()
 		slot.UIStroke.Color = if isEquipped then EQUIPPED_STROKE_COLOR else templateStrokeColor
 	end
+end
+
+-- A newly bought item's slot grows in from nothing, overshooting a little before it settles
+local function popIn(uid: string)
+	local slot = slots[uid]
+	if not slot then
+		return
+	end
+	local scale = (slot :: any).EquipScale :: UIScale
+	scale.Scale = 0
+	-- Replaces the equip tween render just started on the same scale
+	TweenService:Create(scale, POP_IN_INFO, { Scale = if getEquipped() == uid then EQUIPPED_SCALE else 1 }):Play()
 end
 
 local function createSlot(owned: Items.OwnedItem, item: Items.Item, index: number): ImageButton
@@ -147,8 +161,22 @@ end
 
 function InventoryController.Start()
 	InventoryChanged.OnClientEvent:Connect(function(newInventory: { Items.OwnedItem })
+		local hadBefore: { [string]: boolean } = {}
+		for _, owned in inventory do
+			hadBefore[owned.Uid] = true
+		end
+		local isFirst = not received
+		received = true
+
 		inventory = newInventory
 		render()
+		if not isFirst then
+			for _, owned in inventory do
+				if not hadBefore[owned.Uid] then
+					popIn(owned.Uid)
+				end
+			end
+		end
 	end)
 	LocalPlayer:GetAttributeChangedSignal("EquippedItem"):Connect(updateEquipped)
 
