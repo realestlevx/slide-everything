@@ -181,6 +181,7 @@ local function createPrompt(prompt, inputType, gui)
 	local inputFrame = frame.InputFrame
 	local actionText = frame.ActionText
 	local objectText = frame.ObjectText
+	local defaultActionTextColor = actionText.TextColor3
 
 	-- Center the frame so the bounce scales from the middle instead of the top-left corner
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -587,8 +588,16 @@ local function createPrompt(prompt, inputType, gui)
 		promptUI.SizeOffset = Vector2.new(prompt.UIOffset.X / promptUI.Size.Width.Offset, prompt.UIOffset.Y / promptUI.Size.Height.Offset)
 	end
 
+	-- Prompts can recolor their action text with a ProximityTextColor attribute, otherwise the template's color is kept
+	local function updateActionTextColor()
+		local color = prompt:GetAttribute("ProximityTextColor")
+		actionText.TextColor3 = if typeof(color) == "Color3" then color else defaultActionTextColor
+	end
+
 	local changedConnection = prompt.Changed:Connect(updateUIFromPrompt)
+	local textColorConnection = prompt:GetAttributeChangedSignal("ProximityTextColor"):Connect(updateActionTextColor)
 	updateUIFromPrompt()
+	updateActionTextColor()
 
 	promptUI.Adornee = prompt.Parent
 	promptUI.Parent = gui
@@ -607,6 +616,7 @@ local function createPrompt(prompt, inputType, gui)
 		triggeredConnection:Disconnect()
 		triggerEndedConnection:Disconnect()
 		changedConnection:Disconnect()
+		textColorConnection:Disconnect()
 
 		-- The roll prompt hides the moment it's triggered, so let its press land before fading
 		if pressThread then
