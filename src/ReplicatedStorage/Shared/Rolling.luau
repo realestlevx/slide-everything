@@ -1,5 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local ApplyGradient = require(script.Parent.ApplyGradient)
 local FormatMoney = require(script.Parent.FormatMoney)
 local Items = require(script.Parent.Items)
 local Rarities = require(script.Parent.Rarities)
@@ -128,7 +129,9 @@ function Rolling.ShowStats(billboard: BillboardGui, item: Items.Item)
 
 	nameLabel.Text = item.Name
 	rarityLabel.Text = item.Rarity
-	rarityLabel.TextColor3 = Rarities[item.Rarity].Color
+	-- Tinted by the rarity's gradient (named after it), which needs white text underneath
+	rarityLabel.TextColor3 = Color3.new(1, 1, 1)
+	ApplyGradient(rarityLabel, item.Rarity)
 	chanceLabel.Text = `[ 1 in {formatOneIn(Rolling.GetOneIn(item))} ]`
 	priceLabel.Text = FormatMoney(item.Price)
 	billboard.Enabled = true

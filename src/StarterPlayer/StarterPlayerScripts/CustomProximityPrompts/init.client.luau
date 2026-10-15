@@ -4,8 +4,12 @@ local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- This script doesn't wait for game.Loaded, so wait for the module to replicate
+local ApplyGradient = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ApplyGradient"))
 
 local GamepadButtonImage = {
 	[Enum.KeyCode.ButtonX] = "rbxasset://textures/ui/Controls/xboxX.png",
@@ -182,6 +186,13 @@ local function createPrompt(prompt, inputType, gui)
 	local actionText = frame.ActionText
 	local objectText = frame.ObjectText
 	local defaultActionTextColor = actionText.TextColor3
+
+	-- An exact copy of the action text on top of it, for when a gradient covers only part of the text.
+	-- Made before the tweens are set up so it fades along with everything else
+	local gradientText = actionText:Clone()
+	gradientText.Name = "ActionTextGradient"
+	gradientText.Text = ""
+	gradientText.Parent = frame
 
 	-- Center the frame so the bounce scales from the middle instead of the top-left corner
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -546,6 +557,7 @@ local function createPrompt(prompt, inputType, gui)
 		-- todo: Use AutomaticSize instead of GetTextSize when that feature becomes available
 		local actionTextParams = Instance.new("GetTextBoundsParams")
 		actionTextParams.Text = prompt.ActionText
+		actionTextParams.RichText = actionText.RichText -- Otherwise tags like <font> count towards the width
 		actionTextParams.Font = actionText.FontFace
 		actionTextParams.Size = actionText.TextSize
 		actionTextParams.Width = 1000
@@ -574,12 +586,15 @@ local function createPrompt(prompt, inputType, gui)
 			actionTextYOffset = 9
 		end
 		actionText.Position = UDim2.new(0.5, textPaddingLeft - promptWidth/2, 0, actionTextYOffset)
+		gradientText.Position = actionText.Position
 		objectText.Position = UDim2.new(0.5, textPaddingLeft - promptWidth/2, 0, -10)
 
-		actionText.Text = prompt.ActionText
+		-- The action text itself is set by updateActionText
 		objectText.Text = prompt.ObjectText
-		actionText.AutoLocalize = prompt.AutoLocalize
-		actionText.RootLocalizationTable = prompt.RootLocalizationTable
+		for _, label in { actionText, gradientText } do
+			label.AutoLocalize = prompt.AutoLocalize
+			label.RootLocalizationTable = prompt.RootLocalizationTable
+		end
 
 		objectText.AutoLocalize = prompt.AutoLocalize
 		objectText.RootLocalizationTable = prompt.RootLocalizationTable
@@ -588,16 +603,57 @@ local function createPrompt(prompt, inputType, gui)
 		promptUI.SizeOffset = Vector2.new(prompt.UIOffset.X / promptUI.Size.Width.Offset, prompt.UIOffset.Y / promptUI.Size.Height.Offset)
 	end
 
-	-- Prompts can recolor their action text with a ProximityTextColor attribute, otherwise the template's color is kept
-	local function updateActionTextColor()
-		local color = prompt:GetAttribute("ProximityTextColor")
-		actionText.TextColor3 = if typeof(color) == "Color3" then color else defaultActionTextColor
+	local function getStringAttribute(name: string): string?
+		local value = prompt:GetAttribute(name)
+		return if typeof(value) == "string" and value ~= "" then value else nil
 	end
 
-	local changedConnection = prompt.Changed:Connect(updateUIFromPrompt)
-	local textColorConnection = prompt:GetAttributeChangedSignal("ProximityTextColor"):Connect(updateActionTextColor)
+	-- Prompts can recolor their action text with a ProximityTextGradient attribute (the name of a
+	-- UIGradient in ReplicatedStorage.Gradients) or a ProximityTextColor attribute. The gradient wins,
+	-- unless a ProximityGradientText attribute names the part of the text it covers; the rest then keeps
+	-- the color. With neither the template's color is kept
+	local function updateActionText()
+		local text = prompt.ActionText
+		local color = prompt:GetAttribute("ProximityTextColor")
+		if typeof(color) ~= "Color3" then
+			color = defaultActionTextColor
+		end
+		local gradientName = getStringAttribute("ProximityTextGradient")
+		local gradientPart = getStringAttribute("ProximityGradientText")
+		local first, last = nil, nil
+		if gradientPart then
+			first, last = string.find(text, gradientPart, 1, true)
+		end
+
+		if first and last then
+			-- Both labels hold the whole text so the characters line up, each hiding the other's part
+			local function hide(part: string): string
+				return if part == "" then "" else `<font transparency="1">{part}</font>`
+			end
+			local before, after = string.sub(text, 1, first - 1), string.sub(text, last + 1)
+			ApplyGradient(actionText, nil)
+			actionText.Text = before .. hide(gradientPart :: string) .. after
+			actionText.TextColor3 = color
+			gradientText.Text = hide(before) .. (gradientPart :: string) .. hide(after)
+			-- The gradient multiplies the text color, so white shows it as designed
+			gradientText.TextColor3 = if ApplyGradient(gradientText, gradientName) then Color3.new(1, 1, 1) else color
+		else
+			ApplyGradient(gradientText, nil)
+			gradientText.Text = ""
+			actionText.Text = text
+			actionText.TextColor3 = if ApplyGradient(actionText, gradientName) then Color3.new(1, 1, 1) else color
+		end
+	end
+
+	local changedConnection = prompt.Changed:Connect(function()
+		updateUIFromPrompt()
+		updateActionText()
+	end)
+	local textColorConnection = prompt:GetAttributeChangedSignal("ProximityTextColor"):Connect(updateActionText)
+	local textGradientConnection = prompt:GetAttributeChangedSignal("ProximityTextGradient"):Connect(updateActionText)
+	local gradientPartConnection = prompt:GetAttributeChangedSignal("ProximityGradientText"):Connect(updateActionText)
 	updateUIFromPrompt()
-	updateActionTextColor()
+	updateActionText()
 
 	promptUI.Adornee = prompt.Parent
 	promptUI.Parent = gui
@@ -617,6 +673,8 @@ local function createPrompt(prompt, inputType, gui)
 		triggerEndedConnection:Disconnect()
 		changedConnection:Disconnect()
 		textColorConnection:Disconnect()
+		textGradientConnection:Disconnect()
+		gradientPartConnection:Disconnect()
 
 		-- The roll prompt hides the moment it's triggered, so let its press land before fading
 		if pressThread then

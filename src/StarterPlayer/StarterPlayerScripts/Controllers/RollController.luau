@@ -41,6 +41,7 @@ local spinning: { [Folder]: boolean } = {}
 local results: { [Folder]: string } = {} -- The server's pick for the current spin
 local previews: { [Folder]: MeshPart } = {} -- The owner's local item: spinning, then their copy of the result
 local rollPrompts: { [Folder]: ProximityPrompt } = {} -- Hidden while their spin plays
+local rolledItems: { [Folder]: Items.Item } = {} -- What sits on the stand, offered by the buy prompt
 local revealTweens: { [Folder]: { Tween } } = {}
 local leverRestCFrames: { [BasePart]: CFrame } = {}
 local floating: { [BasePart]: CFrame } = {} -- Item -> its resting CFrame
@@ -183,6 +184,32 @@ local function restoreCamera()
 	snapBack:Play()
 end
 
+-- Only up once a roll has landed: hidden on an empty stand and while the items spin
+local function getBuyPrompt(place: Folder): ProximityPrompt?
+	return find(place, "RollStand_1", "Roll_Place", "ProximityPrompt")
+end
+
+-- The text is set while the prompt is still hidden, since the prompt UI only reads it when shown
+local function updateBuyPrompt(place: Folder)
+	local prompt = getBuyPrompt(place)
+	if not prompt then
+		return
+	end
+	local item = rolledItems[place]
+	if item then
+		-- "Buy" keeps the prompt's own color; only the name gets the rarity's gradient
+		prompt.ActionText = `Buy {item.Name}`
+		prompt:SetAttribute("ProximityTextGradient", item.Rarity)
+		prompt:SetAttribute("ProximityGradientText", item.Name)
+	end
+	PromptController.SetHidden(place, prompt, item == nil)
+end
+
+local function setRolledItem(place: Folder, item: Items.Item?)
+	rolledItems[place] = item
+	updateBuyPrompt(place)
+end
+
 local function showRollPrompt(place: Folder)
 	local prompt = rollPrompts[place]
 	if prompt then
@@ -208,6 +235,7 @@ local function cancelSpin(place: Folder)
 	clearPreview(place)
 	setRollingParticles(place, false)
 	showRollPrompt(place)
+	setRolledItem(place, nil)
 end
 
 local function showPreview(place: Folder, item: Items.Item)
@@ -239,6 +267,7 @@ local function reveal(place: Folder, item: Items.Item)
 	playSound("Reveal")
 	restoreCamera()
 	showRollPrompt(place)
+	setRolledItem(place, item)
 
 	local tweens = {}
 	local preview = previews[place]
@@ -333,6 +362,7 @@ local function startRoll(place: Folder, prompt: ProximityPrompt)
 
 	rollPrompts[place] = prompt
 	PromptController.SetHidden(place, prompt, true)
+	setRolledItem(place, nil)
 	results[place] = nil
 	-- A fade still running from the last reveal would paint over the black
 	for _, tween in revealTweens[place] or {} do
@@ -373,6 +403,14 @@ function RollController.Start()
 	RunService.Heartbeat:Connect(updateFloating)
 
 	for _, place in places do
+		updateBuyPrompt(place)
+		place.DescendantAdded:Connect(function(descendant)
+			-- Streamed back in as a fresh prompt that doesn't know it was hidden
+			if descendant == getBuyPrompt(place) then
+				updateBuyPrompt(place)
+			end
+		end)
+
 		for _, descendant in place:GetDescendants() do
 			if descendant.Name == "RolledItem" then
 				startFloating(descendant)

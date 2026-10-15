@@ -1,0 +1,6 @@
+{
+  "className": "UIGradient",
+  "properties": {
+    "Color": { "ColorSequence": { "keypoints": [{ "time": 0, "color": [0.717647, 0, 1] }, { "time": 1, "color": [1, 0.458824, 1] }] } }
+  }
+}
