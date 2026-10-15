@@ -130,7 +130,7 @@ function Rolling.ShowStats(billboard: BillboardGui, item: Items.Item)
 	rarityLabel.Text = item.Rarity
 	rarityLabel.TextColor3 = Rarities[item.Rarity].Color
 	chanceLabel.Text = `[ 1 in {formatOneIn(Rolling.GetOneIn(item))} ]`
-	priceLabel.Text = `{FormatMoney(item.BaseMoneyPerStud)}/stud`
+	priceLabel.Text = FormatMoney(item.Price)
 	billboard.Enabled = true
 end
 

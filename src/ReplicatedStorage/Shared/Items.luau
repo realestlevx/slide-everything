@@ -4,6 +4,7 @@ export type Item = {
 	Id: string,
 	Name: string,
 	Rarity: Rarities.Rarity,
+	Price: number, -- What the item costs to buy
 	BaseMoneyPerStud: number,
 	MeshName: string, -- MeshPart in ReplicatedStorage.Items (with its Hitbox)
 }
@@ -13,6 +14,7 @@ local Items: { [string]: Item } = {
 		Id = "ToyCar",
 		Name = "Toy Car",
 		Rarity = "Common",
+		Price = 25,
 		BaseMoneyPerStud = 1,
 		MeshName = "ToyCar",
 	},
@@ -20,6 +22,7 @@ local Items: { [string]: Item } = {
 		Id = "Phone",
 		Name = "Phone",
 		Rarity = "Uncommon",
+		Price = 75,
 		BaseMoneyPerStud = 2,
 		MeshName = "Phone",
 	},
@@ -27,6 +30,7 @@ local Items: { [string]: Item } = {
 		Id = "Controller",
 		Name = "Controller",
 		Rarity = "Rare",
+		Price = 250,
 		BaseMoneyPerStud = 5,
 		MeshName = "Controller",
 	},
@@ -34,6 +38,7 @@ local Items: { [string]: Item } = {
 		Id = "CartoonCatfish",
 		Name = "Catfish",
 		Rarity = "Epic",
+		Price = 1000,
 		BaseMoneyPerStud = 12,
 		MeshName = "CartoonCatfish",
 	},
@@ -41,6 +46,7 @@ local Items: { [string]: Item } = {
 		Id = "Slide",
 		Name = "Slide",
 		Rarity = "Legendary",
+		Price = 5000,
 		BaseMoneyPerStud = 30,
 		MeshName = "Slide",
 	},
