@@ -4,19 +4,29 @@ local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 
+local InventoryService = require(script.Parent.InventoryService)
+local PlayerDataService = require(script.Parent.PlayerDataService)
+
 local RollResult = ReplicatedStorage.Remotes.RollResult
+local BuyResult = ReplicatedStorage.Remotes.BuyResult
+
+local BUY_COOLDOWN = 0.1 -- Seconds between buy presses that count, so spamming the prompt does nothing
 
 local rng = Random.new()
 local rolling: { [Folder]: boolean } = {}
 local rollTokens: { [Folder]: number } = {} -- Bumped to cancel a roll that's still spinning
+local landed: { [Folder]: Items.Item } = {} -- What sits on each stand, up for sale
+local lastBuyTimes: { [Folder]: number } = {}
 
 local RollService = {}
 
 local function clearStand(place: Folder)
+	landed[place] = nil
 	Rolling.ClearStand((place :: any).RollStand_1)
 end
 
 local function finishRoll(place: Folder, item: Items.Item)
+	landed[place] = item
 	local stand = (place :: any).RollStand_1
 	-- No highlight here: only the owner's local copy gets one (they're costly and capped per client)
 	local display = Rolling.CreateDisplay(item, stand.Roll_Place)
@@ -52,6 +62,31 @@ local function onRollTriggered(place: Folder, player: Player)
 	end)
 end
 
+-- The owner buys whatever landed on their stand, which empties it
+local function onBuyTriggered(place: Folder, player: Player)
+	local item = landed[place]
+	local data = PlayerDataService.Get(player)
+	if place:GetAttribute("OwnerUserId") ~= player.UserId or not (item and data) then
+		return
+	end
+
+	local now = os.clock()
+	if now - (lastBuyTimes[place] or -math.huge) < BUY_COOLDOWN then
+		return
+	end
+	lastBuyTimes[place] = now
+
+	if data.Money < item.Price then
+		BuyResult:FireClient(player, place, false)
+		return
+	end
+
+	PlayerDataService.AddMoney(player, -item.Price)
+	InventoryService.Give(player, item.Id)
+	clearStand(place)
+	BuyResult:FireClient(player, place, true)
+end
+
 local function onOwnerChanged(place: Folder)
 	rollTokens[place] = (rollTokens[place] or 0) + 1
 	rolling[place] = nil
@@ -65,6 +100,10 @@ function RollService.Start()
 		local prompt = (place :: any).RollTools_Model.Proximity_Holder.RollProximity
 		prompt.Triggered:Connect(function(player)
 			onRollTriggered(place, player)
+		end)
+		local buyPrompt = (place :: any).RollStand_1.Roll_Place.ProximityPrompt
+		buyPrompt.Triggered:Connect(function(player)
+			onBuyTriggered(place, player)
 		end)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
 			onOwnerChanged(place)

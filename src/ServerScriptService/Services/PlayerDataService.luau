@@ -4,10 +4,12 @@ local ServerScriptService = game:GetService("ServerScriptService")
 
 local ProfileStore = require(ServerScriptService.ServerPackages.ProfileStore)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local Items = require(ReplicatedStorage.Shared.Items)
 
 local PROFILE_TEMPLATE = {
 	Money = 0,
 	MoneyPerSecond = 0,
+	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
@@ -16,7 +18,12 @@ local PlayerStore = ProfileStore.New("PlayerStore", PROFILE_TEMPLATE)
 
 local Profiles: { [Player]: typeof(PlayerStore:StartSessionAsync("")) } = {}
 
-local PlayerDataService = {}
+local loaded = Instance.new("BindableEvent")
+
+local PlayerDataService = {
+	-- Fires with the player once their data is ready to use
+	Loaded = loaded.Event,
+}
 
 local function createLeaderstats(player: Player, data: Data)
 	local leaderstats = Instance.new("Folder")
@@ -63,6 +70,7 @@ local function onPlayerAdded(player: Player)
 		createLeaderstats(player, profile.Data)
 		-- Not a leaderstat; exposed as an attribute so other services and clients can read it
 		player:SetAttribute("MoneyPerSecond", profile.Data.MoneyPerSecond)
+		loaded:Fire(player)
 	else
 		profile:EndSession()
 	end

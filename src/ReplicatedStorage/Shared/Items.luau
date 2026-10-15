@@ -9,6 +9,12 @@ export type Item = {
 	MeshName: string, -- MeshPart in ReplicatedStorage.Items (with its Hitbox)
 }
 
+-- One item in a player's inventory. Every copy gets its own Uid, so two of the same item stay apart
+export type OwnedItem = {
+	Uid: string,
+	Id: string, -- Key in Items
+}
+
 local Items: { [string]: Item } = {
 	ToyCar = {
 		Id = "ToyCar",

@@ -13,9 +13,12 @@ local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local PromptController = require(script.Parent.PromptController)
 
 local RollResult = ReplicatedStorage.Remotes.RollResult
+local BuyResult = ReplicatedStorage.Remotes.BuyResult
 local LocalPlayer = Players.LocalPlayer
 
 local RESULT_TIMEOUT = 5 -- Stop a spin whose result never comes (the server turned the roll down)
+local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
+local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
 
 local LEVER_ANGLE = math.rad(45) -- Pulled towards the player
 local LEVER_BOUNCE_ANGLE = math.rad(-15) -- Swings back past upright before settling
@@ -42,6 +45,7 @@ local results: { [Folder]: string } = {} -- The server's pick for the current sp
 local previews: { [Folder]: MeshPart } = {} -- The owner's local item: spinning, then their copy of the result
 local rollPrompts: { [Folder]: ProximityPrompt } = {} -- Hidden while their spin plays
 local rolledItems: { [Folder]: Items.Item } = {} -- What sits on the stand, offered by the buy prompt
+local priceColors: { [TextLabel]: Color3 } = {} -- Each price label's own color, taken before it first flashes
 local revealTweens: { [Folder]: { Tween } } = {}
 local leverRestCFrames: { [BasePart]: CFrame } = {}
 local floating: { [BasePart]: CFrame } = {} -- Item -> its resting CFrame
@@ -137,8 +141,8 @@ end
 
 -- Played from the client, so only the owner hears them. Replaying restarts the sound instead of
 -- stacking copies, which keeps the fast ticks at the start of a spin from piling up
-local function playSound(name: string)
-	local sound = find(SoundService, "SFX", "Rolling", name)
+local function playSound(...: string) -- Path under SoundService.SFX
+	local sound = find(SoundService, "SFX", ...)
 	if sound then
 		sound:Play()
 	end
@@ -210,6 +214,30 @@ local function setRolledItem(place: Folder, item: Items.Item?)
 	updateBuyPrompt(place)
 end
 
+-- Too expensive: the price on the stats billboard flashes red and fades back to its own color
+local function showBuyError(place: Folder)
+	playSound("Error")
+
+	local price = find(place, "RollStand_1", "Roll_Place", "Stuff_StatsDisplay", "Price") :: TextLabel?
+	if not price then
+		return
+	end
+	local color = priceColors[price] or price.TextColor3
+	priceColors[price] = color
+	-- Starting a new tween on TextColor3 cancels a flash that's still fading
+	price.TextColor3 = PRICE_ERROR_COLOR
+	TweenService:Create(price, PRICE_FLASH, { TextColor3 = color }):Play()
+end
+
+local function onBought(place: Folder)
+	clearPreview(place)
+	local stand = find(place, "RollStand_1")
+	if stand then
+		Rolling.ClearStand(stand)
+	end
+	setRolledItem(place, nil)
+end
+
 local function showRollPrompt(place: Folder)
 	local prompt = rollPrompts[place]
 	if prompt then
@@ -264,7 +292,7 @@ local function reveal(place: Folder, item: Items.Item)
 	spinning[place] = nil
 	setRollingParticles(place, false)
 	burstFinishParticles(place)
-	playSound("Reveal")
+	playSound("Rolling", "Reveal")
 	restoreCamera()
 	showRollPrompt(place)
 	setRolledItem(place, item)
@@ -349,7 +377,7 @@ local function spin(place: Folder)
 
 		previous = randomFiller(previous)
 		showPreview(place, previous)
-		playSound("Tick")
+		playSound("Rolling", "Tick")
 	end
 end
 
@@ -398,6 +426,14 @@ function RollController.Start()
 
 	RollResult.OnClientEvent:Connect(function(place: Folder, resultId: string)
 		results[place] = resultId
+	end)
+
+	BuyResult.OnClientEvent:Connect(function(place: Folder, bought: boolean)
+		if bought then
+			onBought(place)
+		else
+			showBuyError(place)
+		end
 	end)
 
 	RunService.Heartbeat:Connect(updateFloating)
