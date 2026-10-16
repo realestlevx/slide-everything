@@ -3,6 +3,7 @@ local ProximityPromptService = game:GetService("ProximityPromptService")
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -77,6 +78,10 @@ local SHINE_END_OFFSET = Vector2.new(1, 0)
 local HIGHLIGHT_FILL_TRANSPARENCY = 0.9
 local HIGHLIGHT_OUTLINE_TRANSPARENCY = 0
 local HIGHLIGHT_FADE_START = 6
+-- SFX.ChargeTick plays while a hold prompt is held, speeding up steadily until the ticks come
+-- CHARGE_TICK_SPEEDUP times as often by the end of the hold
+local CHARGE_TICK_INTERVAL = 0.2 -- Seconds between ticks when the hold starts
+local CHARGE_TICK_SPEEDUP = 2.5
 
 local function getScreenGui()
 	local screenGui = PlayerGui:FindFirstChild("ProximityPrompts")
@@ -192,7 +197,15 @@ local function createPrompt(prompt, inputType, gui)
 	local gradientText = actionText:Clone()
 	gradientText.Name = "ActionTextGradient"
 	gradientText.Text = ""
+	-- A stroke still draws hidden characters as solid shapes, which would black out the action text's
+	-- part underneath. The action text strokes the whole text instead
+	for _, child in gradientText:GetChildren() do
+		if child:IsA("UIStroke") then
+			child:Destroy()
+		end
+	end
 	gradientText.Parent = frame
+	local actionTextStroke = actionText:FindFirstChildOfClass("UIStroke")
 
 	-- Center the frame so the bounce scales from the middle instead of the top-left corner
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -530,6 +543,37 @@ local function createPrompt(prompt, inputType, gui)
 		end
 	end
 
+	local chargeThread = nil
+
+	local function stopChargeTicks()
+		if chargeThread then
+			task.cancel(chargeThread)
+			chargeThread = nil
+		end
+	end
+
+	local function playChargeTicks()
+		stopChargeTicks()
+		local sfx = SoundService:FindFirstChild("SFX")
+		local sound = sfx and sfx:FindFirstChild("ChargeTick") :: Sound?
+		if not sound then
+			return
+		end
+
+		chargeThread = task.spawn(function()
+			local startTime = os.clock()
+			local elapsed = 0
+			while elapsed < prompt.HoldDuration do
+				-- Replaying restarts the sound, so the fast ticks near the end don't pile up
+				sound:Play()
+				local speed = 1 + (CHARGE_TICK_SPEEDUP - 1) * elapsed / prompt.HoldDuration
+				task.wait(CHARGE_TICK_INTERVAL / speed)
+				elapsed = os.clock() - startTime
+			end
+			chargeThread = nil
+		end)
+	end
+
 	local holdBeganConnection
 	local holdEndedConnection
 	local triggeredConnection
@@ -540,12 +584,14 @@ local function createPrompt(prompt, inputType, gui)
 			for _, tween in ipairs(tweensForButtonHoldBegin) do
 				tween:Play()
 			end
+			playChargeTicks()
 		end)
 
 		holdEndedConnection = prompt.PromptButtonHoldEnded:Connect(function()
 			for _, tween in ipairs(tweensForButtonHoldEnd) do
 				tween:Play()
 			end
+			stopChargeTicks()
 		end)
 	end
 
@@ -626,13 +672,16 @@ local function createPrompt(prompt, inputType, gui)
 		end
 
 		if first and last then
-			-- Both labels hold the whole text so the characters line up, each hiding the other's part
+			-- Both labels hold the whole text so the characters line up. The gradient label hides the
+			-- rest, and the action text draws the gradient's part in its stroke color under it, so the
+			-- stroke goes around the whole text and the gradient's edges blend into it
 			local function hide(part: string): string
 				return if part == "" then "" else `<font transparency="1">{part}</font>`
 			end
+			local strokeColor = if actionTextStroke then actionTextStroke.Color else Color3.new()
 			local before, after = string.sub(text, 1, first - 1), string.sub(text, last + 1)
 			ApplyGradient(actionText, nil)
-			actionText.Text = before .. hide(gradientPart :: string) .. after
+			actionText.Text = before .. `<font color="#{strokeColor:ToHex()}">{gradientPart}</font>` .. after
 			actionText.TextColor3 = color
 			gradientText.Text = hide(before) .. (gradientPart :: string) .. hide(after)
 			-- The gradient multiplies the text color, so white shows it as designed
@@ -669,6 +718,7 @@ local function createPrompt(prompt, inputType, gui)
 			holdEndedConnection:Disconnect()
 		end
 
+		stopChargeTicks()
 		triggeredConnection:Disconnect()
 		triggerEndedConnection:Disconnect()
 		changedConnection:Disconnect()

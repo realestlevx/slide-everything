@@ -13,9 +13,10 @@ local function isOwner(place: Folder): boolean
 	return place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
 end
 
--- Enabled is only changed locally, so every player sees just their own place's prompts
-local function apply(place: Folder, prompt: ProximityPrompt)
-	prompt.Enabled = isOwner(place) and not hiddenPrompts[prompt]
+-- Enabled is only changed locally, so every player sees just their own place's prompts.
+-- Prompts outside any place (no place given) are for everyone
+local function apply(place: Folder?, prompt: ProximityPrompt)
+	prompt.Enabled = (place == nil or isOwner(place)) and not hiddenPrompts[prompt]
 end
 
 local function refresh(place: Folder)
@@ -27,7 +28,7 @@ local function refresh(place: Folder)
 end
 
 -- Lets other controllers hide one of the owner's prompts for a while, like the roll prompt mid-spin
-function PromptController.SetHidden(place: Folder, prompt: ProximityPrompt, hidden: boolean)
+function PromptController.SetHidden(place: Folder?, prompt: ProximityPrompt, hidden: boolean)
 	hiddenPrompts[prompt] = if hidden then true else nil
 	apply(place, prompt)
 end

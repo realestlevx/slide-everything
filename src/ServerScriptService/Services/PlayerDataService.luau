@@ -10,6 +10,7 @@ local PROFILE_TEMPLATE = {
 	Money = 0,
 	MoneyPerSecond = 0,
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
+	Slots = {} :: { [string]: string }, -- Slot name -> Uid of the inventory item placed in it
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)

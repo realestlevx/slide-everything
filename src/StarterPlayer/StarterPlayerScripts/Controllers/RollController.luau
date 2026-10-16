@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
@@ -10,6 +9,7 @@ local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 
+local FloatController = require(script.Parent.FloatController)
 local PromptController = require(script.Parent.PromptController)
 
 local RollResult = ReplicatedStorage.Remotes.RollResult
@@ -27,9 +27,6 @@ local LEVER_BOUNCE = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirect
 local LEVER_SETTLE = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local POP = TweenInfo.new(Rolling.POP_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local OUTCOME_FADE = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local BOB_HEIGHT = 0.25 -- Studs above and below the center
-local BOB_SPEED = math.pi -- Radians per second, one full bob every 2 seconds
-local TURN_SPEED = math.pi / 2 -- Radians per second, one full turn every 4 seconds
 local FOV_ZOOM = 8 -- How far the field of view drops while rolling
 local FOV_ZOOM_IN = TweenInfo.new(Rolling.SPIN_DURATION, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 local FOV_SNAP_BACK = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -48,7 +45,6 @@ local rolledItems: { [Folder]: Items.Item } = {} -- What sits on the stand, offe
 local priceColors: { [TextLabel]: Color3 } = {} -- Each price label's own color, taken before it first flashes
 local revealTweens: { [Folder]: { Tween } } = {}
 local leverRestCFrames: { [BasePart]: CFrame } = {}
-local floating: { [BasePart]: CFrame } = {} -- Item -> its resting CFrame
 local restingFov: number? = nil -- The player's normal FOV, kept until the snap back has fully finished
 local zoomed = false
 
@@ -91,31 +87,6 @@ local function pullLever(place: Folder)
 		tween.Completed:Wait()
 	end
 	angle:Destroy()
-end
-
--- Floating is local only. One shared clock drives every item, so a new item picks up
--- the current height and turn instead of starting over
-local function getFloatCFrame(rest: CFrame, now: number): CFrame
-	local offset = Vector3.new(0, math.sin(now * BOB_SPEED) * BOB_HEIGHT, 0)
-	local turn = CFrame.Angles(0, -now * TURN_SPEED, 0) -- Negative Y turns clockwise seen from above
-	return CFrame.new(rest.Position + offset) * turn * rest.Rotation
-end
-
-local function updateFloating()
-	local now = os.clock()
-	for item, rest in floating do
-		if item.Parent then
-			item.CFrame = getFloatCFrame(rest, now)
-		else
-			floating[item] = nil
-		end
-	end
-end
-
--- Applied right away so a new item never shows a frame at its resting turn
-local function startFloating(item: BasePart)
-	floating[item] = item.CFrame
-	item.CFrame = getFloatCFrame(item.CFrame, os.clock())
 end
 
 local function clearPreview(place: Folder)
@@ -283,7 +254,7 @@ local function showPreview(place: Folder, item: Items.Item)
 	preview.Size = fullSize * 0.01
 	preview.Parent = stand
 	previews[place] = preview
-	startFloating(preview)
+	FloatController.Float(preview)
 	TweenService:Create(preview, POP, { Size = fullSize }):Play()
 end
 
@@ -437,8 +408,6 @@ function RollController.Start()
 		end
 	end)
 
-	RunService.Heartbeat:Connect(updateFloating)
-
 	for _, place in places do
 		updateBuyPrompt(place)
 		place.DescendantAdded:Connect(function(descendant)
@@ -450,7 +419,7 @@ function RollController.Start()
 
 		for _, descendant in place:GetDescendants() do
 			if descendant.Name == "RolledItem" then
-				startFloating(descendant)
+				FloatController.Float(descendant)
 			end
 		end
 
@@ -462,7 +431,7 @@ function RollController.Start()
 			if previews[place] then
 				descendant:Destroy()
 			else
-				startFloating(descendant)
+				FloatController.Float(descendant)
 			end
 		end)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()

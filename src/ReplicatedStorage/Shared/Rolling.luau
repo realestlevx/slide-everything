@@ -11,42 +11,33 @@ local Rolling = {
 	POP_TIME = 0.1, -- Each shown item grows to full size in this long
 }
 
-type Pool = { Weight: number, Items: { Items.Item } }
-
--- One pool per rarity that has items, so empty rarities never get rolled
-local pools: { Pool } = {}
-local poolByRarity: { [string]: Pool } = {}
-local totalWeight = 0
+-- Every item that can roll, each with its own chance
+local rollable: { Items.Item } = {}
+local totalChance = 0
 
 for _, item in Items do
-	local pool = poolByRarity[item.Rarity]
-	if not pool then
-		pool = { Weight = Rarities[item.Rarity].Weight, Items = {} }
-		poolByRarity[item.Rarity] = pool
-		table.insert(pools, pool)
-		totalWeight += pool.Weight
+	if item.Chance > 0 then
+		table.insert(rollable, item)
+		totalChance += item.Chance
 	end
-	table.insert(pool.Items, item)
 end
 
 function Rolling.Pick(rng: Random): Items.Item
-	local roll = rng:NextNumber() * totalWeight
-	for _, pool in pools do
-		roll -= pool.Weight
-		if roll <= 0 then
-			return pool.Items[rng:NextInteger(1, #pool.Items)]
+	local roll = rng:NextNumber() * totalChance
+	for _, item in rollable do
+		if roll < item.Chance then
+			return item
 		end
+		roll -= item.Chance
 	end
 
-	-- Floating point leftovers land in the last pool
-	local last = pools[#pools]
-	return last.Items[rng:NextInteger(1, #last.Items)]
+	-- Floating point leftovers land on the last item
+	return rollable[#rollable]
 end
 
--- The item's own odds: its rarity's chance split between the items of that rarity
+-- The item's odds out of every item's chances together
 function Rolling.GetOneIn(item: Items.Item): number
-	local pool = poolByRarity[item.Rarity]
-	return totalWeight / pool.Weight * #pool.Items
+	return totalChance / item.Chance
 end
 
 -- A visual-only copy of the item's mesh (no hitbox), centered in Roll_Place

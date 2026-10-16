@@ -28,8 +28,10 @@ local EQUIPPED_STROKE_COLOR = Color3.new(1, 1, 1)
 local EQUIP_INFO = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local POP_IN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
-local inventory: { Items.OwnedItem } = {} -- As the server last sent it
-local received = false -- The first inventory is what the player already had, so it doesn't pop in
+local inventory: { Items.OwnedItem } = {} -- As the server last sent it; items placed in a slot aren't in it
+-- The first inventory is what the player already had, so it doesn't pop in. Later on, items bought
+-- or taken back out of a slot do
+local received = false
 local shown: { Items.OwnedItem } = {} -- The items with a slot, in slot order (unknown ids are skipped)
 local slots: { [string]: ImageButton } = {} -- Uid -> its slot
 local list: Frame? = nil
@@ -41,6 +43,17 @@ local InventoryController = {}
 local function getEquipped(): string?
 	local uid = LocalPlayer:GetAttribute("EquippedItem")
 	return if typeof(uid) == "string" then uid else nil
+end
+
+-- The item in the player's hands, if any
+function InventoryController.GetEquippedItem(): Items.Item?
+	local equipped = getEquipped()
+	for _, owned in inventory do
+		if owned.Uid == equipped then
+			return Items[owned.Id]
+		end
+	end
+	return nil
 end
 
 -- The server checks the item is owned and sets EquippedItem, which the slots then follow
@@ -102,7 +115,8 @@ local function createSlot(owned: Items.OwnedItem, item: Items.Item, index: numbe
 	slot.LayoutOrder = index
 	slot.Visible = true;
 	(slot :: any).LayoutOrderText.Text = tostring(index);
-	(slot :: any).CashPerStud.Text = `{FormatMoney(item.BaseMoneyPerStud)}/stud`
+	(slot :: any).CashPerStud.Text = `{FormatMoney(item.BaseMoneyPerStud)}/stud`;
+	(slot :: any).ItemIcon.Image = `rbxassetid://{item.Icon}`
 
 	-- The slot keeps its own gradient and takes the rarity's look from UiGradients
 	local rarityGradient = UiGradients:FindFirstChild(item.Rarity) :: UIGradient?

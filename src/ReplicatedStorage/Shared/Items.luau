@@ -3,7 +3,13 @@ local Rarities = require(script.Parent.Rarities)
 export type Item = {
 	Id: string,
 	Name: string,
+	-- Image asset id (the number only) shown in the hotbar and on slot billboards. It has to be the
+	-- Image's id, not a Decal's: in Asset Manager, right-click the image and Copy Asset ID
+	Icon: number,
 	Rarity: Rarities.Rarity,
+	-- Percent chance of rolling this item, whatever its rarity. Chances are relative: if they don't
+	-- add up to 100, each is scaled to fit. 0 means it never rolls
+	Chance: number,
 	Price: number, -- What the item costs to buy
 	BaseMoneyPerStud: number,
 	MeshName: string, -- MeshPart in ReplicatedStorage.Items (with its Hitbox)
@@ -19,7 +25,9 @@ local Items: { [string]: Item } = {
 	ToyCar = {
 		Id = "ToyCar",
 		Name = "Toy Car",
+		Icon = 115762315554217,
 		Rarity = "Common",
+		Chance = 60,
 		Price = 25,
 		BaseMoneyPerStud = 1,
 		MeshName = "ToyCar",
@@ -27,7 +35,9 @@ local Items: { [string]: Item } = {
 	Phone = {
 		Id = "Phone",
 		Name = "Phone",
+		Icon = 71237800789095,
 		Rarity = "Uncommon",
+		Chance = 25,
 		Price = 75,
 		BaseMoneyPerStud = 2,
 		MeshName = "Phone",
@@ -35,7 +45,9 @@ local Items: { [string]: Item } = {
 	Controller = {
 		Id = "Controller",
 		Name = "Controller",
+		Icon = 112844902116541,
 		Rarity = "Rare",
+		Chance = 10,
 		Price = 250,
 		BaseMoneyPerStud = 5,
 		MeshName = "Controller",
@@ -43,7 +55,9 @@ local Items: { [string]: Item } = {
 	CartoonCatfish = {
 		Id = "CartoonCatfish",
 		Name = "Catfish",
+		Icon = 118233477633149,
 		Rarity = "Epic",
+		Chance = 4,
 		Price = 1000,
 		BaseMoneyPerStud = 12,
 		MeshName = "CartoonCatfish",
@@ -51,7 +65,9 @@ local Items: { [string]: Item } = {
 	Slide = {
 		Id = "Slide",
 		Name = "Slide",
+		Icon = 112614433925436,
 		Rarity = "Legendary",
+		Chance = 1,
 		Price = 5000,
 		BaseMoneyPerStud = 30,
 		MeshName = "Slide",
