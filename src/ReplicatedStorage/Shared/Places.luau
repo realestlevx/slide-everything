@@ -1,4 +1,7 @@
-local Places = {}
+local Places = {
+	-- The part in a slot that its item floats at, holding the place prompt and the billboard
+	SLOT_PART = "Slot_Place",
+}
 
 local function isPlace(instance: Instance): boolean
 	return instance:IsA("Folder") and instance.Name:match("^Place%d+$") ~= nil

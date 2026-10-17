@@ -11,6 +11,7 @@ export type Item = {
 	-- add up to 100, each is scaled to fit. 0 means it never rolls
 	Chance: number,
 	Price: number, -- What the item costs to buy
+	MoneyPerSecond: number, -- Earned every second while the item sits in a slot
 	BaseMoneyPerStud: number,
 	MeshName: string, -- MeshPart in ReplicatedStorage.Items (with its Hitbox)
 }
@@ -29,6 +30,7 @@ local Items: { [string]: Item } = {
 		Rarity = "Common",
 		Chance = 60,
 		Price = 25,
+		MoneyPerSecond = 1,
 		BaseMoneyPerStud = 1,
 		MeshName = "ToyCar",
 	},
@@ -39,6 +41,7 @@ local Items: { [string]: Item } = {
 		Rarity = "Uncommon",
 		Chance = 25,
 		Price = 75,
+		MoneyPerSecond = 3,
 		BaseMoneyPerStud = 2,
 		MeshName = "Phone",
 	},
@@ -49,6 +52,7 @@ local Items: { [string]: Item } = {
 		Rarity = "Rare",
 		Chance = 10,
 		Price = 250,
+		MoneyPerSecond = 10,
 		BaseMoneyPerStud = 5,
 		MeshName = "Controller",
 	},
@@ -59,6 +63,7 @@ local Items: { [string]: Item } = {
 		Rarity = "Epic",
 		Chance = 4,
 		Price = 1000,
+		MoneyPerSecond = 40,
 		BaseMoneyPerStud = 12,
 		MeshName = "CartoonCatfish",
 	},
@@ -69,6 +74,7 @@ local Items: { [string]: Item } = {
 		Rarity = "Legendary",
 		Chance = 1,
 		Price = 5000,
+		MoneyPerSecond = 200,
 		BaseMoneyPerStud = 30,
 		MeshName = "Slide",
 	},
