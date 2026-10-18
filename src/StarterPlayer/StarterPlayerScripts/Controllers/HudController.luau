@@ -17,11 +17,12 @@ local EDGE_MARGIN = 0.1 -- Pieces slide this share of their own size past the ed
 -- The pieces of the screen that swap while the player's items drop. These are on screen in the drop
 -- view; the rest are on screen the rest of the time
 local DROP_VIEW_PIECES = { Spectate = true, ControlFrame = true, Left = true, Right = true }
--- Both sequences play side by side, each step once the one before has finished: in this order into
+-- The sequences play side by side, each step once the one before has finished: in this order into
 -- the drop view, and backwards out of it. A step's pieces move together
 local SEQUENCES = {
 	{ { "BaseButtons" }, { "Spectate" } },
 	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right" } },
+	{ { "Cash", "Gem" } },
 }
 
 local STEER_ACTION = "SteerItems"
@@ -305,11 +306,22 @@ local function bindInventory(gui: Instance)
 	addPiece("Inventory", gui:WaitForChild("Main") :: GuiObject, "Bottom")
 end
 
+-- Found wherever they are in the gui, so the frames around them can change
+local function bindCurrency(gui: Instance)
+	for _, name in { "Cash", "Gem" } do
+		local frame = gui:FindFirstChild(name, true)
+		if frame and frame:IsA("GuiObject") then
+			addPiece(name, frame, "Left")
+		end
+	end
+end
+
 function HudController.Start()
 	local binders: { [string]: (Instance) -> () } = {
 		TopScreenGui = bindTop,
 		ControlGui = bindControls,
 		Inventory = bindInventory,
+		["Cash/Gem"] = bindCurrency,
 	}
 	PlayerGui.ChildAdded:Connect(function(child)
 		local bind = binders[child.Name]

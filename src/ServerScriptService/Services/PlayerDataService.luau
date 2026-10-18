@@ -8,6 +8,7 @@ local Items = require(ReplicatedStorage.Shared.Items)
 
 local PROFILE_TEMPLATE = {
 	Money = 2500, -- Starting money: a Toy Car, a second slot and another car
+	Gems = 0,
 	MoneyPerSecond = 0,
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
 	Slots = {} :: { [string]: string }, -- Slot key (its SlotNumber as text) -> Uid of the inventory item placed in it
@@ -74,7 +75,10 @@ local function onPlayerAdded(player: Player)
 	if player.Parent == Players then
 		Profiles[player] = profile
 		createLeaderstats(player, profile.Data)
-		-- Not a leaderstat; exposed as an attribute so other services and clients can read it
+		-- Exposed as attributes so other services and clients can read them: the leaderstat only has
+		-- money as text, and the rest aren't leaderstats at all
+		player:SetAttribute("Money", profile.Data.Money)
+		player:SetAttribute("Gems", profile.Data.Gems)
 		player:SetAttribute("MoneyPerSecond", profile.Data.MoneyPerSecond)
 		loaded:Fire(player)
 	else
@@ -95,6 +99,17 @@ function PlayerDataService.SetMoney(player: Player, amount: number)
 
 	data.Money = amount
 	updateLeaderstat(player, "Money", FormatMoney(amount))
+	player:SetAttribute("Money", amount)
+end
+
+function PlayerDataService.AddGems(player: Player, amount: number)
+	local data = PlayerDataService.Get(player)
+	if not data then
+		return
+	end
+
+	data.Gems += amount
+	player:SetAttribute("Gems", data.Gems)
 end
 
 function PlayerDataService.AddMoney(player: Player, amount: number)
