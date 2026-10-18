@@ -92,4 +92,19 @@ function ButtonController.Animate(button: GuiButton, scaledWith: { GuiObject }?)
 	end)
 end
 
+-- For buttons already at their full size, which can't grow on hover: they only press down while
+-- held. The caller says when that is, since keys can hold them down as well as touches
+function ButtonController.AnimatePress(button: GuiButton): (held: boolean) -> ()
+	local scale = makeScalable(button)
+	local isHeld = false
+	return function(held: boolean)
+		if held == isHeld then
+			return
+		end
+		isHeld = held
+		local info = if held then PRESS_INFO else RELEASE_INFO
+		TweenService:Create(scale, info, { Scale = if held then PRESS_SCALE else 1 }):Play()
+	end
+end
+
 return ButtonController

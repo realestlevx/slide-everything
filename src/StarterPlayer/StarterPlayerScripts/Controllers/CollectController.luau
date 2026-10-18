@@ -1,0 +1,258 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+
+local Drops = require(ReplicatedStorage.Shared.Drops)
+local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local Items = require(ReplicatedStorage.Shared.Items)
+local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
+local Places = require(ReplicatedStorage.Shared.Places)
+
+local LocalPlayer = Players.LocalPlayer
+
+local BILLBOARD_NAME = "Collect_Gui" -- On a place's collect pad, with an Amount label for the uncollected cash
+local COLLECT_NAME = "Collect" -- Model in a place with the collect pad
+local STACK_PART_NAME = "StackPart" -- Invisible box over the collect pad that finished items stack up in
+-- Spots across the stack part an item can go, this many each way. It goes on whichever is lowest,
+-- so the stack rises evenly
+local STACK_GRID = 3
+local EDGE_INSET = 0.15 -- Share of the stack part's width and depth kept clear on each side
+local SPOT_JITTER = 0.5 -- Studs an item may sit off its spot, so the stack doesn't look like a grid
+local REBUILD_STAGGER = 0.05 -- Seconds between items when a saved stack is put back
+local APPEAR_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- Collected, every item flies up off the stack, then into the player, shrinking away as it goes.
+-- The top of the stack goes first
+local RISE_HEIGHT = 4 -- Studs
+local RISE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local FLY_INFO = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+-- They set off closer and closer together, so the ticks as they reach the player speed up
+local FIRST_GAP = 0.2 -- Seconds between the first item setting off and the second
+local GAP_SHRINK = 0.85 -- Each gap is this share of the one before
+local MIN_GAP = 0.04 -- Seconds; the fastest the ticks get
+local MIN_SCALE = 0.02 -- Parts can't shrink to nothing
+
+type StackItem = {
+	Part: BasePart, -- The item's mesh
+	Parts: { BasePart },
+}
+
+-- Only the player's own stack is made, on this client. The server keeps what's in it, and says so
+-- with the place's CollectItems attribute
+local stack: { StackItem } = {}
+local stackPlace: Folder? = nil -- The place whose saved stack has been put back, which happens once
+
+local CollectController = {}
+
+local function isOwn(place: Folder): boolean
+	return place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+end
+
+local function getStackPart(place: Folder): BasePart?
+	local collect = place:FindFirstChild(COLLECT_NAME)
+	local stackPart = collect and collect:FindFirstChild(STACK_PART_NAME)
+	return if stackPart and stackPart:IsA("BasePart") then stackPart else nil
+end
+
+-- Half the height of a box turned this way, from its middle to its lowest corner
+local function getHalfHeight(rotation: CFrame, size: Vector3): number
+	return (
+		math.abs(rotation.RightVector.Y) * size.X
+		+ math.abs(rotation.UpVector.Y) * size.Y
+		+ math.abs(rotation.LookVector.Y) * size.Z
+	) / 2
+end
+
+-- An item lands on the stack where the lowest of the spots is, lowered from the top of the stack
+-- part until it meets what's already there. Nil once even the lowest spot would stick out the top
+local function findLanding(stackPart: BasePart, rotation: CFrame, size: Vector3): CFrame?
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.RespectCanCollide = true
+	params.FilterDescendantsInstances = if LocalPlayer.Character then { LocalPlayer.Character } else {}
+
+	local halfHeight = getHalfHeight(rotation, size)
+	local up = stackPart.CFrame.UpVector
+	local fall = stackPart.Size.Y + halfHeight * 2
+	local lowest: CFrame? = nil
+	local lowestHeight = math.huge
+	for column = 1, STACK_GRID do
+		for row = 1, STACK_GRID do
+			local x = ((column - 0.5) / STACK_GRID - 0.5) * stackPart.Size.X * (1 - EDGE_INSET * 2)
+			local z = ((row - 0.5) / STACK_GRID - 0.5) * stackPart.Size.Z * (1 - EDGE_INSET * 2)
+			x += (math.random() - 0.5) * 2 * SPOT_JITTER
+			z += (math.random() - 0.5) * 2 * SPOT_JITTER
+			local above = stackPart.CFrame * Vector3.new(x, stackPart.Size.Y / 2 + halfHeight, z)
+			local start = CFrame.new(above) * rotation
+			local hit = workspace:Blockcast(start, size, -up * fall, params)
+			local landing = start - up * (if hit then hit.Distance else fall)
+			local height = (landing.Position - stackPart.Position):Dot(up)
+			-- Ties go either way, so the stack doesn't always start in the same corner
+			if height < lowestHeight - 0.01 or (math.abs(height - lowestHeight) <= 0.01 and math.random() < 0.5) then
+				lowest, lowestHeight = landing, height
+			end
+		end
+	end
+
+	if lowestHeight + halfHeight > stackPart.Size.Y / 2 then
+		return nil
+	end
+	return lowest
+end
+
+-- A finished item appears on top of the stack, anchored where it lands
+function CollectController.AddToPile(place: Folder, item: Items.Item)
+	local stackPart = getStackPart(place)
+	if not stackPart or #stack >= Drops.MAX_PILE then
+		return
+	end
+	local modelled, size = PhysicalItem.GetShape(item)
+	local rotation = CFrame.Angles(0, math.random() * 2 * math.pi, 0) * modelled
+	local landing = findLanding(stackPart, rotation, size)
+	if not landing then
+		return
+	end
+
+	local copy, parts = PhysicalItem.Create(item, landing)
+	for _, part in parts do
+		part.Anchored = true
+		part.LocalTransparencyModifier = 1
+		TweenService:Create(part, APPEAR_INFO, { LocalTransparencyModifier = 0 }):Play()
+	end
+	copy.Parent = workspace
+	table.insert(stack, { Part = copy, Parts = parts })
+end
+
+-- Played from the client, so only this player hears them. Playing one again restarts it, so items
+-- arriving one after another tick rather than pile up
+local function playSound(name: string) -- Sound in SoundService.SFX.Collection
+	local sfx = SoundService:FindFirstChild("SFX")
+	local collection = sfx and sfx:FindFirstChild("Collection")
+	local sound = collection and collection:FindFirstChild(name)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
+	end
+end
+
+local function getRoot(): BasePart?
+	local character = LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	return if root and root:IsA("BasePart") then root else nil
+end
+
+-- Up off the stack, then into the player while shrinking. It follows the player if they move
+local function flyToPlayer(stackItem: StackItem, startDelay: number)
+	local part = stackItem.Part
+	-- Only the mesh flies; the hitbox has nothing left to do
+	for _, other in stackItem.Parts do
+		if other ~= part then
+			other:Destroy()
+		end
+	end
+
+	task.wait(startDelay)
+	local rise = TweenService:Create(part, RISE_INFO, { CFrame = part.CFrame + Vector3.yAxis * RISE_HEIGHT })
+	rise:Play()
+	rise.Completed:Wait()
+
+	local from = part.CFrame
+	local size = part.Size
+	local progress = Instance.new("NumberValue")
+	progress.Changed:Connect(function(alpha: number)
+		local root = getRoot()
+		local target = if root then root.Position else from.Position
+		part.CFrame = from.Rotation + from.Position:Lerp(target, alpha)
+		part.Size = size * math.max(1 - alpha, MIN_SCALE)
+	end)
+	local fly = TweenService:Create(progress, FLY_INFO, { Value = 1 })
+	fly:Play()
+	fly.Completed:Wait()
+	part:Destroy()
+	progress:Destroy()
+	playSound("Tick")
+end
+
+local function collectStack()
+	playSound("Collect")
+	local startDelay, gap = 0, FIRST_GAP
+	for index = #stack, 1, -1 do
+		task.spawn(flyToPlayer, stack[index], startDelay)
+		startDelay += gap
+		gap = math.max(gap * GAP_SHRINK, MIN_GAP)
+	end
+	table.clear(stack)
+end
+
+local function clearStack()
+	for _, stackItem in stack do
+		stackItem.Part:Destroy()
+	end
+	table.clear(stack)
+end
+
+-- The saved stack comes back once, the first time the player's data shows up on their place. After
+-- that, it grows as items finish here, and flies to the player when the pad is collected
+local function onStackChanged(place: Folder)
+	if not isOwn(place) then
+		return
+	end
+	local saved = place:GetAttribute("CollectItems")
+	if typeof(saved) ~= "string" then
+		return
+	end
+
+	if stackPlace ~= place then
+		stackPlace = place
+		clearStack()
+		for id in saved:gmatch("[^,]+") do
+			local item = Items[id]
+			if item then
+				CollectController.AddToPile(place, item)
+				task.wait(REBUILD_STAGGER)
+			end
+		end
+	elseif saved == "" then
+		collectStack()
+	end
+end
+
+-- Everyone sees what's waiting on each place's pad
+local function showCash(place: Folder)
+	local collect = place:FindFirstChild(COLLECT_NAME)
+	local billboard = collect and collect:FindFirstChild(BILLBOARD_NAME, true)
+	local amount = billboard and billboard:FindFirstChild("Amount", true)
+	if amount and amount:IsA("TextLabel") then
+		local cash = place:GetAttribute("CollectCash")
+		amount.Text = FormatMoney(if typeof(cash) == "number" then cash else 0, 2)
+	end
+end
+
+function CollectController.Start()
+	for _, place in Places.GetAll() do
+		showCash(place)
+		place:GetAttributeChangedSignal("CollectCash"):Connect(function()
+			showCash(place)
+		end)
+		-- The pad is streamed, so its billboard can arrive after the cash
+		place.DescendantAdded:Connect(function(descendant)
+			if descendant.Name == BILLBOARD_NAME then
+				showCash(place)
+			end
+		end)
+
+		task.spawn(onStackChanged, place)
+		place:GetAttributeChangedSignal("CollectItems"):Connect(function()
+			onStackChanged(place)
+		end)
+		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+			if stackPlace == place and not isOwn(place) then
+				stackPlace = nil
+				clearStack()
+			end
+			onStackChanged(place)
+		end)
+	end
+end
+
+return CollectController

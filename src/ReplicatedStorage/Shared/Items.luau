@@ -27,15 +27,17 @@ export type OwnedItem = {
 }
 
 -- Each rarity earns about 5x the one below it, but takes longer to earn back its price: 10s for a
--- Common, up to about 3.5 min for a Legendary. Slots are the limit, so rarer is always worth having,
--- and the rarest can't be bought the moment they first roll
+-- Toy Car, up to about 4.5 min for a D20. Slots are the limit, so rarer is always worth having, and
+-- the rarest can't be bought the moment they first roll. A second item in a rarity is its better
+-- version: 1.5x the earnings for twice the price, and 2-2.5x rarer.
+-- The chances add up to about 100%, so the odds the stands show match the ones written here
 local Items: { [string]: Item } = {
 	ToyCar = {
 		Id = "ToyCar",
 		Name = "Toy Car",
 		Icon = 115762315554217,
 		Rarity = "Common",
-		Chance = 60,
+		Chance = 58,
 		Price = 1000,
 		MoneyPerSecond = 100,
 		BaseMoneyPerStud = 1,
@@ -46,7 +48,7 @@ local Items: { [string]: Item } = {
 		Name = "Phone",
 		Icon = 71237800789095,
 		Rarity = "Uncommon",
-		Chance = 30,
+		Chance = 28,
 		Price = 5000,
 		MoneyPerSecond = 400,
 		BaseMoneyPerStud = 2,
@@ -62,6 +64,17 @@ local Items: { [string]: Item } = {
 		MoneyPerSecond = 2000,
 		BaseMoneyPerStud = 5,
 		MeshName = "Controller",
+	},
+	RubiksCube = {
+		Id = "RubiksCube",
+		Name = "Rubik's Cube",
+		Icon = 133035680603276,
+		Rarity = "Rare",
+		OneIn = 25,
+		Price = 150000,
+		MoneyPerSecond = 3000,
+		BaseMoneyPerStud = 8,
+		MeshName = "RubiksCube",
 	},
 	CartoonCatfish = {
 		Id = "CartoonCatfish",
@@ -84,6 +97,17 @@ local Items: { [string]: Item } = {
 		MoneyPerSecond = 50000,
 		BaseMoneyPerStud = 30,
 		MeshName = "Slide",
+	},
+	D20 = {
+		Id = "D20",
+		Name = "D20",
+		Icon = 127955549258628,
+		Rarity = "Legendary",
+		OneIn = 1000,
+		Price = 20000000,
+		MoneyPerSecond = 75000,
+		BaseMoneyPerStud = 45,
+		MeshName = "D20",
 	},
 }
 

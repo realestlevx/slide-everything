@@ -27,6 +27,7 @@ local PARTICLES_NAME = "Particles" -- Folder in the slot part with the emitters 
 
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
+local SLOT_FADE_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 -- "+ $X" popups over each earning slot, copied from the Cash BillboardGui in its slot part (with an
 -- Amount TextLabel). They start at its StudsOffset and float up while fading out
@@ -39,6 +40,8 @@ local POPUP_FADE_INFO = TweenInfo.new(1, Enum.EasingStyle.Linear)
 local slotPlaces: { [Model]: Folder } = {} -- Every slot seen so far -> its place
 local billboards: { [Model]: BillboardGui } = {} -- Slot -> the copy of its billboard in PlayerGui
 local priceColors: { [TextLabel]: Color3 } = {} -- Each upgrade price label's own color, taken before it first flashes
+local fadedPlaces: { [Folder]: boolean } = {} -- Places whose slots are faded out while their items drop
+local billboardSizes: { [BillboardGui]: UDim2 } = {} -- Each billboard's own size, taken before it first shrinks away
 
 local SlotController = {}
 
@@ -280,6 +283,9 @@ end
 local function onDescendantAdded(place: Folder, descendant: Instance)
 	if descendant.Name == SLOT_ITEM_NAME and descendant:IsA("BasePart") then
 		FloatController.Float(descendant)
+		if fadedPlaces[place] then
+			descendant.LocalTransparencyModifier = 1
+		end
 		return
 	end
 
@@ -297,6 +303,33 @@ local function onDescendantAdded(place: Folder, descendant: Instance)
 	elseif descendant:IsA("ProximityPrompt") then
 		-- Streamed back in as a fresh prompt that doesn't know it was hidden
 		refresh(slot)
+	end
+end
+
+-- Fades the place's slots out on this client while its items drop, or back in. LocalTransparencyModifier
+-- only changes how they look here, so the server's own transparencies (like a locked slot's) stay as
+-- they are. The items in them go at once, since dropped copies take their place
+function SlotController.SetFaded(place: Folder, faded: boolean)
+	fadedPlaces[place] = if faded then true else nil
+	for _, slot in Places.GetSlots(place) do
+		for _, descendant in slot:GetDescendants() do
+			if not (descendant:IsA("BasePart") or descendant:IsA("Decal")) then
+				continue
+			end
+			if faded and descendant.Name == SLOT_ITEM_NAME then
+				descendant.LocalTransparencyModifier = 1
+			else
+				TweenService:Create(descendant, SLOT_FADE_INFO, { LocalTransparencyModifier = if faded then 1 else 0 }):Play()
+			end
+		end
+
+		-- Billboards have no transparency of their own, so they shrink away instead
+		local billboard = billboards[slot]
+		if billboard then
+			local size = billboardSizes[billboard] or billboard.Size
+			billboardSizes[billboard] = size
+			TweenService:Create(billboard, SLOT_FADE_INFO, { Size = if faded then UDim2.new() else size }):Play()
+		end
 	end
 end
 
@@ -336,7 +369,8 @@ function SlotController.Start()
 	-- Sent each second with what every earning slot made, by slot key
 	IncomeTick.OnClientEvent:Connect(function(earnings: { [string]: number })
 		local place = getOwnPlace()
-		if not place then
+		-- Nothing pops up over slots that are faded out
+		if not place or fadedPlaces[place] then
 			return
 		end
 		for _, slot in Places.GetSlots(place) do

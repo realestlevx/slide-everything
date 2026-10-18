@@ -12,24 +12,35 @@ export type Upgrade = {
 	Levels: { Level },
 }
 
+local MAX_LUCK = 100
+local LUCK_PRICE = 10000 -- What 2x costs
+local LUCK_GROWTH = 1.2 -- Each level costs this much more again on top of the (N - 1)² below
+
+-- Rounded to 2 significant digits, so the price the panel shows (like "$3.5M") is the exact price
+local function roundPrice(price: number): number
+	local unit = 10 ^ math.max(math.floor(math.log10(price)) - 1, 0)
+	return math.round(price / unit) * unit
+end
+
+-- 1x, 2x, 3x and so on up to MAX_LUCK. Going up to Nx costs
+-- LUCK_PRICE * (N - 1)² * LUCK_GROWTH^(N - 2): 10K for 2x, 3.5M for 10x, 380M for 25x, 150B for 50x,
+-- 33T for 75x and 5.6Qa for 100x
+local function getLuckLevels(): { Level }
+	local levels: { Level } = { { Value = 1 } }
+	for luck = 2, MAX_LUCK do
+		local price = LUCK_PRICE * (luck - 1) ^ 2 * LUCK_GROWTH ^ (luck - 2)
+		table.insert(levels, { Value = luck, Price = roundPrice(price) })
+	end
+	return levels
+end
+
 local SignUpgrades = {
 	Upgrades = {
 		-- Multiplies every item's roll chance; see Rolling.Pick
 		Luck = {
 			Frame = "Luck_Frame",
 			Suffix = "x",
-			Levels = {
-				{ Value = 1 },
-				{ Value = 1.5, Price = 3000 },
-				{ Value = 2, Price = 10000 },
-				{ Value = 3, Price = 40000 },
-				{ Value = 5, Price = 150000 },
-				{ Value = 7.5, Price = 500000 },
-				{ Value = 10, Price = 2000000 },
-				{ Value = 15, Price = 7500000 },
-				{ Value = 25, Price = 25000000 },
-				{ Value = 50, Price = 100000000 },
-			},
+			Levels = getLuckLevels(),
 		},
 	} :: { [string]: Upgrade },
 }

@@ -14,6 +14,8 @@ local PROFILE_TEMPLATE = {
 	BoughtSlots = {} :: { [string]: boolean }, -- Slot key -> true for every slot bought from the sign
 	UpgradeLevels = {} :: { [string]: number }, -- Sign upgrade name (see SignUpgrades) -> level, 1 if missing
 	LastRoll = nil :: string?, -- Item Id of the last roll if it wasn't bought, put back on the stand on join
+	CollectCash = 0, -- Earned by drops, waiting on the place's collect pad to be picked up
+	CollectItems = {} :: { string }, -- Item Ids of the latest finished drops, piled on the collect pad
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
