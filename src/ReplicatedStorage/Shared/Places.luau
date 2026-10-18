@@ -30,24 +30,44 @@ function Places.Find(instance: Instance): Folder?
 	return nil
 end
 
--- A Model in a place named Slot, optionally numbered (Slot_2), holds one item. Saves remember
--- items by slot name, so every slot in a place needs a name of its own
+-- A Model in a place with a SlotNumber attribute holds one item, whatever it's called. Slots are
+-- bought in SlotNumber order (1, 2, 3, ...) and saves remember them by it, so every slot in a place
+-- needs a number of its own. Later floors' slots just carry on counting
 function Places.IsSlot(instance: Instance): boolean
 	local place = instance.Parent
 	return instance:IsA("Model")
-		and instance.Name:match("^Slot_?%d*$") ~= nil
+		and typeof(instance:GetAttribute("SlotNumber")) == "number"
 		and place ~= nil
 		and place.Parent == workspace
 		and isPlace(place)
 end
 
+function Places.GetSlotNumber(slot: Model): number
+	return slot:GetAttribute("SlotNumber") :: number
+end
+
+-- The slot's key in saves. Text, since saved tables can't have gaps in number keys
+function Places.GetSlotKey(slot: Model): string
+	return tostring(Places.GetSlotNumber(slot))
+end
+
+-- What the slot costs on the sign, from its Price attribute. Without one it's free from the start
+function Places.GetSlotPrice(slot: Model): number
+	local price = slot:GetAttribute("Price")
+	return if typeof(price) == "number" then price else 0
+end
+
+-- In SlotNumber order, which is the order they're bought in
 function Places.GetSlots(place: Folder): { Model }
 	local slots = {}
 	for _, child in place:GetChildren() do
 		if Places.IsSlot(child) then
-			table.insert(slots, child)
+			table.insert(slots, child :: Model)
 		end
 	end
+	table.sort(slots, function(a, b)
+		return Places.GetSlotNumber(a) < Places.GetSlotNumber(b)
+	end)
 	return slots
 end
 

@@ -1,10 +1,12 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local InventoryService = require(script.Parent.InventoryService)
 local PlaceService = require(script.Parent.PlaceService)
@@ -12,13 +14,55 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local RemoveFromSlot = ReplicatedStorage.Remotes.RemoveFromSlot
 local IncomeTick = ReplicatedStorage.Remotes.IncomeTick
+local UpgradeSlot = ReplicatedStorage.Remotes.UpgradeSlot
+local UpgradeResult = ReplicatedStorage.Remotes.UpgradeResult
+local BuySlot = ReplicatedStorage.Remotes.BuySlot
+local BuySlotResult = ReplicatedStorage.Remotes.BuySlotResult
 
 local SLOT_ITEM_NAME = "SlotItem"
 local RARITY_PART_NAME = "Rarity" -- Part in a slot tinted with its item's rarity color
+local SLOT_TEMPLATE_NAME = "Slot" -- Model in ServerStorage every slot is copied from
+-- Invisible parts anywhere in a place marking where its slots go. Each stands in for its slot's
+-- Slot_Place and carries the slot's SlotNumber and Price attributes
+local SLOT_POSITION_NAME = "Slot_Position"
 
 local rarityPartColors: { [BasePart]: Color3 } = {} -- Each Rarity part's own color, for empty slots
+local partTransparencies: { [BasePart]: number } = {} -- Each slot part's own transparency, for once it's bought
 
 local SlotService = {}
+
+-- Puts a copy of the slot template on each of the place's Slot_Position parts, with the part's
+-- attributes. The part goes once its slot is there
+local function spawnSlots(place: Folder)
+	local template = ServerStorage:FindFirstChild(SLOT_TEMPLATE_NAME)
+	local templatePart = template and template:FindFirstChild(Places.SLOT_PART)
+	if not (template and template:IsA("Model") and templatePart and templatePart:IsA("BasePart")) then
+		warn(`ServerStorage needs a {SLOT_TEMPLATE_NAME} model with a {Places.SLOT_PART} part for slots to be placed`)
+		return
+	end
+	-- Where the template's pivot sits from its Slot_Place, so each copy's Slot_Place lands on its marker
+	local pivotOffset = templatePart.CFrame:ToObjectSpace(template:GetPivot())
+
+	for _, marker in place:GetDescendants() do
+		if not (marker:IsA("BasePart") and marker.Name == SLOT_POSITION_NAME) then
+			continue
+		end
+		local number = marker:GetAttribute("SlotNumber")
+		if typeof(number) ~= "number" then
+			warn(`{marker:GetFullName()} needs a SlotNumber attribute to get a slot`)
+			continue
+		end
+
+		local slot = template:Clone()
+		slot.Name = `Slot_{number}`
+		for name, value in marker:GetAttributes() do
+			slot:SetAttribute(name, value)
+		end
+		slot:PivotTo(marker.CFrame * pivotOffset)
+		slot.Parent = place
+		marker:Destroy()
+	end
+end
 
 local function tintRarityPart(slot: Model, item: Items.Item?)
 	local part = slot:FindFirstChild(RARITY_PART_NAME)
@@ -30,15 +74,17 @@ local function tintRarityPart(slot: Model, item: Items.Item?)
 	part.Color = if item then Rarities[item.Rarity].Color else ownColor
 end
 
--- Shows the item in the slot for everyone, or empties it. The ItemId attribute tells clients
--- what's in it for the billboard and the place prompt
-local function show(slot: Model, item: Items.Item?)
+-- Shows the item in the slot for everyone, or empties it. The ItemId and ItemLevel attributes tell
+-- clients what's in it for the billboard and the place prompt
+local function show(slot: Model, owned: Items.OwnedItem?)
+	local item = owned and Items[owned.Id]
 	local old = slot:FindFirstChild(SLOT_ITEM_NAME)
 	if old then
 		old:Destroy()
 	end
 	tintRarityPart(slot, item)
 	slot:SetAttribute("ItemId", if item then item.Id else nil)
+	slot:SetAttribute("ItemLevel", if owned and item then Upgrades.GetLevel(owned) else nil)
 	local slotPart = slot:FindFirstChild(Places.SLOT_PART) :: BasePart?
 	if not (item and slotPart) then
 		return
@@ -49,16 +95,59 @@ local function show(slot: Model, item: Items.Item?)
 	display.Parent = slot
 end
 
--- What each of the player's slots earns per second, by slot name, and all of them together
+-- Free slots are always there; the rest once bought from the sign
+local function isUnlocked(data: PlayerDataService.Data?, slot: Model): boolean
+	return Places.GetSlotPrice(slot) <= 0 or (data ~= nil and data.BoughtSlots[Places.GetSlotKey(slot)] == true)
+end
+
+-- A slot that isn't bought yet isn't there: hidden for everyone. The Unlocked attribute tells clients
+-- to keep its place prompt down, and the sign which slot is next
+local function setUnlocked(slot: Model, unlocked: boolean)
+	slot:SetAttribute("Unlocked", unlocked)
+	for _, part in slot:GetDescendants() do
+		if part:IsA("BasePart") and part.Name ~= SLOT_ITEM_NAME then
+			local ownTransparency = partTransparencies[part] or part.Transparency
+			partTransparencies[part] = ownTransparency
+			part.Transparency = if unlocked then ownTransparency else 1
+		end
+	end
+end
+
+-- The next slot up for sale: the first, in SlotNumber order, that isn't free or bought yet
+local function getNextSlot(place: Folder, data: PlayerDataService.Data): Model?
+	for _, slot in Places.GetSlots(place) do
+		if not isUnlocked(data, slot) then
+			return slot
+		end
+	end
+	return nil
+end
+
+-- What the place's Increase Slots sign shows, as attributes on the place: slots are streamed, so
+-- clients can't always count them. NextSlotPrice is nil once every slot is bought
+local function updateSign(place: Folder, data: PlayerDataService.Data?)
+	local unlocked = 0
+	for _, slot in Places.GetSlots(place) do
+		if isUnlocked(data, slot) then
+			unlocked += 1
+		end
+	end
+	local nextSlot = if data then getNextSlot(place, data) else nil
+	place:SetAttribute("SlotsUnlocked", unlocked)
+	place:SetAttribute("NextSlotPrice", if nextSlot then Places.GetSlotPrice(nextSlot) else nil)
+end
+
+-- What each of the player's slots earns per second, by slot key, and all of them together
 local function getEarnings(player: Player): ({ [string]: number }, number)
 	local data = PlayerDataService.Get(player)
 	local earnings, total = {}, 0
 	for name, uid in if data then data.Slots else {} do
 		local owned = InventoryService.Find(player, uid)
 		local item = owned and Items[owned.Id]
-		if item then
-			earnings[name] = item.MoneyPerSecond
-			total += item.MoneyPerSecond
+		if owned and item then
+			local amount = Upgrades.GetMoneyPerSecond(item, Upgrades.GetLevel(owned))
+			earnings[name] = amount
+			total += amount
 		end
 	end
 	return earnings, total
@@ -85,23 +174,25 @@ local function getOwner(place: Folder): Player?
 	return if typeof(ownerId) == "number" then Players:GetPlayerByUserId(ownerId) else nil
 end
 
--- A slot renamed or removed in Studio would keep its item hidden for good, so that item goes
--- back to the hotbar instead
+-- A slot renumbered, removed or given a price in Studio would keep its item hidden for good, so that
+-- item goes back to the hotbar instead
 local function dropMissingSlots(player: Player, place: Folder)
 	local data = PlayerDataService.Get(player)
 	if not data then
 		return
 	end
 
-	local names = {}
+	local keys = {}
 	for _, slot in Places.GetSlots(place) do
-		names[slot.Name] = true
+		if isUnlocked(data, slot) then
+			keys[Places.GetSlotKey(slot)] = true
+		end
 	end
 
 	local dropped = false
-	for name, uid in data.Slots do
-		if not names[name] or not InventoryService.Find(player, uid) then
-			data.Slots[name] = nil
+	for key, uid in data.Slots do
+		if not keys[key] or not InventoryService.Find(player, uid) then
+			data.Slots[key] = nil
 			dropped = true
 		end
 	end
@@ -110,8 +201,8 @@ local function dropMissingSlots(player: Player, place: Folder)
 	end
 end
 
--- Slots show what the place's owner keeps in them. They stay empty while nobody owns the place
--- or the owner's data is still loading
+-- Slots show what the place's owner bought and keeps in them. Only the free ones are there, empty,
+-- while nobody owns the place or the owner's data is still loading
 local function refreshPlace(place: Folder)
 	local owner = getOwner(place)
 	local data = if owner then PlayerDataService.Get(owner) else nil
@@ -121,10 +212,12 @@ local function refreshPlace(place: Folder)
 	end
 
 	for _, slot in Places.GetSlots(place) do
-		local uid = data and data.Slots[slot.Name]
+		setUnlocked(slot, isUnlocked(data, slot))
+		local uid = data and data.Slots[Places.GetSlotKey(slot)]
 		local owned = if owner and uid then InventoryService.Find(owner, uid) else nil
-		show(slot, owned and Items[owned.Id])
+		show(slot, owned)
 	end
+	updateSign(place, data)
 end
 
 -- The owner puts the item in their hands into an empty slot
@@ -135,42 +228,108 @@ local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 	if place:GetAttribute("OwnerUserId") ~= player.UserId or not (data and owned and item) then
 		return
 	end
-	if data.Slots[slot.Name] then
+	local key = Places.GetSlotKey(slot)
+	if data.Slots[key] or not isUnlocked(data, slot) then
 		return
 	end
 
-	data.Slots[slot.Name] = owned.Uid
+	data.Slots[key] = owned.Uid
 	InventoryService.Equip(player, nil)
-	show(slot, item)
+	show(slot, owned)
 	InventoryService.Sync(player)
 	updateMoneyPerSecond(player)
 end
 
+-- Whether a slot sent by a client is one of that player's own
+local function isOwnSlot(player: Player, slot: any): boolean
+	local place = PlaceService.GetPlace(player)
+	return place ~= nil and typeof(slot) == "Instance" and slot.Parent == place and Places.IsSlot(slot)
+end
+
 -- The slot's Remove button: its item goes back to the hotbar
 local function onRemove(player: Player, slot: any)
-	local place = PlaceService.GetPlace(player)
 	local data = PlayerDataService.Get(player)
-	if not (place and data and typeof(slot) == "Instance" and slot.Parent == place and Places.IsSlot(slot)) then
+	if not (data and isOwnSlot(player, slot)) then
 		return
 	end
-	if not data.Slots[slot.Name] then
+	local key = Places.GetSlotKey(slot)
+	if not data.Slots[key] then
 		return
 	end
 
-	data.Slots[slot.Name] = nil
+	data.Slots[key] = nil
 	show(slot, nil)
 	InventoryService.Sync(player)
 	updateMoneyPerSecond(player)
 end
 
+-- The slot's Upgrade button: the item in it goes up a level, if the player can pay for it. The
+-- level is the item's own, so it keeps it when taken back out of the slot
+local function onUpgrade(player: Player, slot: any)
+	local data = PlayerDataService.Get(player)
+	if not (data and isOwnSlot(player, slot)) then
+		return
+	end
+	local uid = data.Slots[Places.GetSlotKey(slot)]
+	local owned = uid and InventoryService.Find(player, uid)
+	local item = owned and Items[owned.Id]
+	if not (owned and item) then
+		return
+	end
+
+	local level = Upgrades.GetLevel(owned)
+	local cost = Upgrades.GetCost(item, level)
+	if data.Money < cost then
+		UpgradeResult:FireClient(player, slot, false)
+		return
+	end
+
+	PlayerDataService.AddMoney(player, -cost)
+	owned.Level = level + 1
+	-- Just the attribute, so the item already floating in the slot isn't made again
+	slot:SetAttribute("ItemLevel", owned.Level)
+	updateMoneyPerSecond(player)
+	UpgradeResult:FireClient(player, slot, true)
+end
+
+-- The sign's Increase Slots button: buys the next slot, if the player can pay for it. Only at the
+-- player's own place, whichever sign was clicked
+local function onBuySlot(player: Player, place: any)
+	local data = PlayerDataService.Get(player)
+	if not (data and place ~= nil and place == PlaceService.GetPlace(player)) then
+		return
+	end
+	local slot = getNextSlot(place, data)
+	if not slot then
+		return
+	end
+
+	local price = Places.GetSlotPrice(slot)
+	if data.Money < price then
+		BuySlotResult:FireClient(player, false)
+		return
+	end
+
+	PlayerDataService.AddMoney(player, -price)
+	data.BoughtSlots[Places.GetSlotKey(slot)] = true
+	setUnlocked(slot, true)
+	updateSign(place, data)
+	-- Spending the starting money on slots before buying an item would leave nothing to earn with
+	InventoryService.EnsureCanStart(player)
+	BuySlotResult:FireClient(player, true)
+end
+
 function SlotService.Start()
 	for _, place in Places.GetAll() do
-		local names = {}
+		spawnSlots(place)
+
+		local numbers = {}
 		for _, slot in Places.GetSlots(place) do
-			if names[slot.Name] then
-				warn(`{place.Name} has more than one {slot.Name}. Slots are saved by name, so give each its own`)
+			local key = Places.GetSlotKey(slot)
+			if numbers[key] then
+				warn(`{place.Name} has more than one slot with SlotNumber {key}. Slots are saved by number, so give each its own`)
 			end
-			names[slot.Name] = true
+			numbers[key] = true
 
 			-- The prompt lives in the place file, so it can go missing; that slot just can't be filled then
 			local slotPart = slot:FindFirstChild(Places.SLOT_PART)
@@ -198,6 +357,8 @@ function SlotService.Start()
 	end)
 
 	RemoveFromSlot.OnServerEvent:Connect(onRemove)
+	UpgradeSlot.OnServerEvent:Connect(onUpgrade)
+	BuySlot.OnServerEvent:Connect(onBuySlot)
 
 	-- Items in slots pay out once a second
 	task.spawn(function()

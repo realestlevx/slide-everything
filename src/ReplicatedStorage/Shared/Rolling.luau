@@ -11,33 +11,69 @@ local Rolling = {
 	POP_TIME = 0.1, -- Each shown item grows to full size in this long
 }
 
--- Every item that can roll, each with its own chance
-local rollable: { Items.Item } = {}
-local totalChance = 0
-
-for _, item in Items do
-	if item.Chance > 0 then
-		table.insert(rollable, item)
-		totalChance += item.Chance
+local function getWeight(item: Items.Item): number
+	if item.OneIn and item.OneIn > 0 then
+		return 1 / item.OneIn
 	end
+	return (item.Chance or 0) / 100
 end
 
-function Rolling.Pick(rng: Random): Items.Item
-	local roll = rng:NextNumber() * totalChance
+-- Every item that can roll, rarest first, with its share of all the odds together (adding up to 1)
+local rollable: { Items.Item } = {}
+local shares: { [Items.Item]: number } = {}
+local totalWeight = 0
+
+for _, item in Items do
+	local weight = getWeight(item)
+	if weight > 0 then
+		table.insert(rollable, item)
+		totalWeight += weight
+	end
+end
+for _, item in rollable do
+	shares[item] = getWeight(item) / totalWeight
+end
+table.sort(rollable, function(a, b)
+	return shares[a] < shares[b]
+end)
+
+-- The roll is divided by the luck, then matched against the items' odds stacked rarest first. At 1x
+-- luck the odds are exactly what the stands show. At 50x, a 1 in 2M item hits on any roll under
+-- 50 in 2M, so every item's chance is 50x and the extra comes out of the commonest items' share
+function Rolling.Pick(rng: Random, luck: number?): Items.Item
+	local roll = rng:NextNumber() / math.max(luck or 1, 1)
+	local reach = 0
 	for _, item in rollable do
-		if roll < item.Chance then
+		reach += shares[item]
+		if roll < reach then
 			return item
 		end
-		roll -= item.Chance
 	end
 
-	-- Floating point leftovers land on the last item
+	-- Floating point leftovers land on the commonest item
 	return rollable[#rollable]
 end
 
--- The item's odds out of every item's chances together
+-- What the cheapest item a roll at this luck can land on costs. Enough luck skips the commonest
+-- items altogether, so their price stops counting
+function Rolling.GetCheapestPrice(luck: number?): number
+	local limit = 1 / math.max(luck or 1, 1)
+	local cheapest = math.huge
+	local reach = 0
+	for _, item in rollable do
+		if reach >= limit then
+			break
+		end
+		cheapest = math.min(cheapest, item.Price)
+		reach += shares[item]
+	end
+	return cheapest
+end
+
+-- The item's odds without luck, as shown on the stand. Infinite for items that never roll
 function Rolling.GetOneIn(item: Items.Item): number
-	return totalChance / item.Chance
+	local share = shares[item]
+	return if share then 1 / share else math.huge
 end
 
 -- A visual-only copy of the item's mesh (no hitbox), centered in Roll_Place
@@ -107,6 +143,9 @@ end
 local function formatOneIn(oneIn: number): string
 	if oneIn < 10 then
 		return (string.format("%.1f", oneIn):gsub("%.0$", ""))
+	elseif oneIn >= 1000 then
+		-- Shortened like money is, without the $: 2000000 -> "2M"
+		return (FormatMoney(oneIn):gsub("^%$", ""))
 	end
 	return tostring(math.round(oneIn))
 end

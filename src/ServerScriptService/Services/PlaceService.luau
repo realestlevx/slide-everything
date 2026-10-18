@@ -28,7 +28,7 @@ end
 
 local function updateMoneyPerSecond(place: Folder, player: Player)
 	local label = (getBillboard(place) :: any).MoneyPerSecond
-	label.Text = `{FormatMoney(player:GetAttribute("MoneyPerSecond") or 0)}/s`
+	label.Text = `{FormatMoney(player:GetAttribute("MoneyPerSecond") or 0, 2)}/s`
 end
 
 local function loadHeadshot(place: Folder, player: Player)

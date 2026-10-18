@@ -7,10 +7,13 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
 
 local PROFILE_TEMPLATE = {
-	Money = 0,
+	Money = 2500, -- Starting money: a Toy Car, a second slot and another car
 	MoneyPerSecond = 0,
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
-	Slots = {} :: { [string]: string }, -- Slot name -> Uid of the inventory item placed in it
+	Slots = {} :: { [string]: string }, -- Slot key (its SlotNumber as text) -> Uid of the inventory item placed in it
+	BoughtSlots = {} :: { [string]: boolean }, -- Slot key -> true for every slot bought from the sign
+	UpgradeLevels = {} :: { [string]: number }, -- Sign upgrade name (see SignUpgrades) -> level, 1 if missing
+	LastRoll = nil :: string?, -- Item Id of the last roll if it wasn't bought, put back on the stand on join
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)

@@ -1,25 +1,32 @@
 local Players = game:GetService("Players")
-local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
+local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
+local ButtonController = require(script.Parent.ButtonController)
 local FloatController = require(script.Parent.FloatController)
 local InventoryController = require(script.Parent.InventoryController)
 local PromptController = require(script.Parent.PromptController)
 
 local RemoveFromSlot = ReplicatedStorage.Remotes.RemoveFromSlot
 local IncomeTick = ReplicatedStorage.Remotes.IncomeTick
+local UpgradeSlot = ReplicatedStorage.Remotes.UpgradeSlot
+local UpgradeResult = ReplicatedStorage.Remotes.UpgradeResult
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local BILLBOARD_NAME = "Stuff_UpgradeDisplay"
 local SLOT_ITEM_NAME = "SlotItem"
-local PARTICLES_NAME = "Particles" -- Folder in the slot part with the emitters that burst on placing
+local PARTICLES_NAME = "Particles" -- Folder in the slot part with the emitters that burst on an upgrade
+
+local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
+local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
 
 -- "+ $X" popups over each earning slot, copied from the Cash BillboardGui in its slot part (with an
 -- Amount TextLabel). They start at its StudsOffset and float up while fading out
@@ -31,6 +38,7 @@ local POPUP_FADE_INFO = TweenInfo.new(1, Enum.EasingStyle.Linear)
 
 local slotPlaces: { [Model]: Folder } = {} -- Every slot seen so far -> its place
 local billboards: { [Model]: BillboardGui } = {} -- Slot -> the copy of its billboard in PlayerGui
+local priceColors: { [TextLabel]: Color3 } = {} -- Each upgrade price label's own color, taken before it first flashes
 
 local SlotController = {}
 
@@ -51,12 +59,20 @@ local function getItem(slot: Model): Items.Item?
 	return if typeof(id) == "string" then Items[id] else nil
 end
 
-local function showStats(billboard: BillboardGui, item: Items.Item)
+-- Items saved before upgrades existed show as level 1
+local function getLevel(slot: Model): number
+	local level = slot:GetAttribute("ItemLevel")
+	return if typeof(level) == "number" then level else 1
+end
+
+local function showStats(billboard: BillboardGui, item: Items.Item, level: number)
 	local main = (billboard :: any).Main
 	local stats = main.Stats
 	-- FindFirstChild because stats.Name is the Name property, not the label
 	local nameLabel = stats:FindFirstChild("Name") :: TextLabel
 	local rarityLabel = stats.Rarity :: TextLabel
+	local levelLabel = stats:FindFirstChild("Level") :: TextLabel?
+	local priceLabel = billboard:FindFirstChild("UpgradePrice", true) :: TextLabel?
 
 	main.Icon.Image = `rbxassetid://{item.Icon}`
 	nameLabel.Text = item.Name
@@ -64,7 +80,13 @@ local function showStats(billboard: BillboardGui, item: Items.Item)
 	-- Tinted by the rarity's gradient (named after it), which needs white text underneath
 	rarityLabel.TextColor3 = Color3.new(1, 1, 1)
 	ApplyGradient(rarityLabel, item.Rarity)
-	stats.Cash.Text = `{FormatMoney(item.MoneyPerSecond)}/s`
+	stats.Cash.Text = `{FormatMoney(Upgrades.GetMoneyPerSecond(item, level), 2)}/s`
+	if levelLabel then
+		levelLabel.Text = `Level {level}`
+	end
+	if priceLabel then
+		priceLabel.Text = FormatMoney(Upgrades.GetCost(item, level))
+	end
 end
 
 local function refresh(slot: Model)
@@ -76,7 +98,7 @@ local function refresh(slot: Model)
 		local buttons = (billboard :: any).Main.Buttons :: Frame
 		billboard.Enabled = item ~= nil
 		if item then
-			showStats(billboard, item)
+			showStats(billboard, item, getLevel(slot))
 		end
 		-- Everyone sees what's in a slot; only the owner gets its buttons
 		buttons.Visible = place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
@@ -92,8 +114,9 @@ local function refresh(slot: Model)
 			prompt:SetAttribute("ProximityTextGradient", held.Rarity)
 			prompt:SetAttribute("ProximityGradientText", held.Name)
 		end
-		-- Only up while the player holds an item and the slot is free
-		PromptController.SetHidden(place, prompt, item ~= nil or held == nil)
+		-- Only up while the player holds an item and the slot is bought and empty
+		local unlocked = slot:GetAttribute("Unlocked") == true
+		PromptController.SetHidden(place, prompt, item ~= nil or held == nil or not unlocked)
 	end
 end
 
@@ -109,6 +132,12 @@ local function watchSlot(place: Folder, slot: Model)
 	end
 	slotPlaces[slot] = place
 	slot:GetAttributeChangedSignal("ItemId"):Connect(function()
+		refresh(slot)
+	end)
+	slot:GetAttributeChangedSignal("ItemLevel"):Connect(function()
+		refresh(slot)
+	end)
+	slot:GetAttributeChangedSignal("Unlocked"):Connect(function()
 		refresh(slot)
 	end)
 end
@@ -127,10 +156,17 @@ local function copyBillboard(slot: Model, original: BillboardGui)
 	billboards[slot] = billboard
 	original.Enabled = false
 
-	local removeButton = (billboard :: any).Main.Buttons.RemoveButton :: ImageButton
+	local buttons = (billboard :: any).Main.Buttons
+	local removeButton = buttons.RemoveButton :: ImageButton
 	removeButton.Activated:Connect(function()
 		RemoveFromSlot:FireServer(slot)
 	end)
+	local upgradeButton = buttons.UpgradeButton :: ImageButton
+	upgradeButton.Activated:Connect(function()
+		UpgradeSlot:FireServer(slot)
+	end)
+	ButtonController.Animate(removeButton)
+	ButtonController.Animate(upgradeButton)
 
 	-- The original leaves with its part when that streams out, and the copy goes with it
 	original.AncestryChanged:Connect(function()
@@ -182,7 +218,7 @@ local function showEarned(slot: Model, amount: number)
 	local popup = template:Clone()
 	local amountLabel = popup:FindFirstChild("Amount", true) :: TextLabel?
 	if amountLabel then
-		amountLabel.Text = `+ {FormatMoney(amount)}`
+		amountLabel.Text = `+ {FormatMoney(amount, 2)}`
 	end
 	popup.Adornee = slotPart
 	popup.ResetOnSpawn = false
@@ -214,6 +250,31 @@ local function burstParticles(slot: Model)
 			emitter:Emit(count)
 		end
 	end
+end
+
+-- Played from the client, so only this player hears them
+local function playSound(name: string) -- Sound under SoundService.SFX
+	local sfx = SoundService:FindFirstChild("SFX")
+	local sound = sfx and sfx:FindFirstChild(name)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
+	end
+end
+
+-- Too expensive: the upgrade price flashes red and fades back to its own color
+local function showUpgradeError(slot: Model)
+	playSound("Error")
+
+	local billboard = billboards[slot]
+	local price = billboard and billboard:FindFirstChild("UpgradePrice", true)
+	if not (price and price:IsA("TextLabel")) then
+		return
+	end
+	local color = priceColors[price] or price.TextColor3
+	priceColors[price] = color
+	-- Starting a new tween on TextColor3 cancels a flash that's still fading
+	price.TextColor3 = PRICE_ERROR_COLOR
+	TweenService:Create(price, PRICE_FLASH, { TextColor3 = color }):Play()
 end
 
 local function onDescendantAdded(place: Folder, descendant: Instance)
@@ -260,25 +321,28 @@ function SlotController.Start()
 	-- Picking an item up or putting it away shows or hides the place prompts
 	LocalPlayer:GetAttributeChangedSignal("EquippedItem"):Connect(refreshAll)
 
-	-- Bursts the moment the owner places an item, without waiting for the server. Only the owner can
-	-- trigger a slot's prompt, and only while it's free, so the server takes the item
-	ProximityPromptService.PromptTriggered:Connect(function(prompt)
-		local slot = getSlot(prompt)
-		if slot then
+	UpgradeResult.OnClientEvent:Connect(function(slot: Model?, upgraded: boolean)
+		-- Nil when the slot has streamed out by the time the answer arrives
+		if not slot then
+			return
+		elseif upgraded then
+			playSound("Buy")
 			burstParticles(slot)
+		else
+			showUpgradeError(slot)
 		end
 	end)
 
-	-- Sent each second with what every earning slot made, by slot name
+	-- Sent each second with what every earning slot made, by slot key
 	IncomeTick.OnClientEvent:Connect(function(earnings: { [string]: number })
 		local place = getOwnPlace()
 		if not place then
 			return
 		end
-		for name, amount in earnings do
-			local slot = place:FindFirstChild(name)
-			if slot and Places.IsSlot(slot) then
-				showEarned(slot :: Model, amount)
+		for _, slot in Places.GetSlots(place) do
+			local amount = earnings[Places.GetSlotKey(slot)]
+			if amount then
+				showEarned(slot, amount)
 			end
 		end
 	end)

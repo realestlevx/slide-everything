@@ -5,6 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
+local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local InventoryChanged = ReplicatedStorage.Remotes.InventoryChanged
 local EquipItem = ReplicatedStorage.Remotes.EquipItem
@@ -115,7 +116,8 @@ local function createSlot(owned: Items.OwnedItem, item: Items.Item, index: numbe
 	slot.LayoutOrder = index
 	slot.Visible = true;
 	(slot :: any).LayoutOrderText.Text = tostring(index);
-	(slot :: any).CashPerStud.Text = `{FormatMoney(item.BaseMoneyPerStud)}/stud`;
+	-- What the item earns in a slot, at its own level, which it keeps when taken back out of one
+	(slot :: any).CashPerStud.Text = `{FormatMoney(Upgrades.GetMoneyPerSecond(item, Upgrades.GetLevel(owned)), 2)}/s`;
 	(slot :: any).ItemIcon.Image = `rbxassetid://{item.Icon}`
 
 	-- The slot keeps its own gradient and takes the rarity's look from UiGradients

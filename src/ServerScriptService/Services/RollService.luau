@@ -1,3 +1,4 @@
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Items = require(ReplicatedStorage.Shared.Items)
@@ -6,11 +7,15 @@ local Rolling = require(ReplicatedStorage.Shared.Rolling)
 
 local InventoryService = require(script.Parent.InventoryService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local SignUpgradeService = require(script.Parent.SignUpgradeService)
 
 local RollResult = ReplicatedStorage.Remotes.RollResult
 local BuyResult = ReplicatedStorage.Remotes.BuyResult
 
 local BUY_COOLDOWN = 0.1 -- Seconds between buy presses that count, so spamming the prompt does nothing
+-- Place attribute holding the Id of the item on the stand, so the owner's client can offer it even
+-- when it wasn't rolled just now (put back from their last visit)
+local STAND_ITEM_ATTRIBUTE = "StandItem"
 
 local rng = Random.new()
 local rolling: { [Folder]: boolean } = {}
@@ -22,11 +27,13 @@ local RollService = {}
 
 local function clearStand(place: Folder)
 	landed[place] = nil
+	place:SetAttribute(STAND_ITEM_ATTRIBUTE, nil)
 	Rolling.ClearStand((place :: any).RollStand_1)
 end
 
 local function finishRoll(place: Folder, item: Items.Item)
 	landed[place] = item
+	place:SetAttribute(STAND_ITEM_ATTRIBUTE, item.Id)
 	local stand = (place :: any).RollStand_1
 	-- No highlight here: only the owner's local copy gets one (they're costly and capped per client)
 	local display = Rolling.CreateDisplay(item, stand.Roll_Place)
@@ -45,8 +52,13 @@ local function onRollTriggered(place: Folder, player: Player)
 	rollTokens[place] = token
 	rolling[place] = true
 
-	local item = Rolling.Pick(rng)
+	local item = Rolling.Pick(rng, SignUpgradeService.GetValue(player, "Luck"))
 	clearStand(place)
+	-- Saved as soon as it's picked, so leaving mid-spin still keeps it
+	local data = PlayerDataService.Get(player)
+	if data then
+		data.LastRoll = item.Id
+	end
 	-- The owner's client is already spinning; it only needs the result for the last item.
 	-- Everyone else just sees the result land
 	RollResult:FireClient(player, place, item.Id)
@@ -83,18 +95,41 @@ local function onBuyTriggered(place: Folder, player: Player)
 
 	PlayerDataService.AddMoney(player, -item.Price)
 	InventoryService.Give(player, item.Id)
+	data.LastRoll = nil
 	clearStand(place)
 	BuyResult:FireClient(player, place, true)
+end
+
+-- The owner's unbought roll from last time goes back on their stand. Needs both the place and
+-- the owner's data, which can be ready in either order
+local function restoreLastRoll(place: Folder)
+	local ownerId = place:GetAttribute("OwnerUserId")
+	local owner = if typeof(ownerId) == "number" then Players:GetPlayerByUserId(ownerId) else nil
+	local data = owner and PlayerDataService.Get(owner)
+	local item = data and data.LastRoll and Items[data.LastRoll]
+	if item and not (rolling[place] or landed[place]) then
+		finishRoll(place, item)
+	end
 end
 
 local function onOwnerChanged(place: Folder)
 	rollTokens[place] = (rollTokens[place] or 0) + 1
 	rolling[place] = nil
 	clearStand(place)
+	restoreLastRoll(place)
 end
 
 function RollService.Start()
-	for _, place in Places.GetAll() do
+	local places = Places.GetAll()
+	PlayerDataService.Loaded:Connect(function(player)
+		for _, place in places do
+			if place:GetAttribute("OwnerUserId") == player.UserId then
+				restoreLastRoll(place)
+			end
+		end
+	end)
+
+	for _, place in places do
 		clearStand(place)
 
 		local prompt = (place :: any).RollTools_Model.Proximity_Holder.RollProximity

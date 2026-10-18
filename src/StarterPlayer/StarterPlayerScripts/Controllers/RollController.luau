@@ -16,6 +16,7 @@ local RollResult = ReplicatedStorage.Remotes.RollResult
 local BuyResult = ReplicatedStorage.Remotes.BuyResult
 local LocalPlayer = Players.LocalPlayer
 
+local STAND_ITEM_ATTRIBUTE = "StandItem" -- Set by the server on the place to the Id of what's on the stand
 local RESULT_TIMEOUT = 5 -- Stop a spin whose result never comes (the server turned the roll down)
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
@@ -292,6 +293,35 @@ local function reveal(place: Folder, item: Items.Item)
 	end
 end
 
+-- The server's copy of what's on the stand is only kept by the owner when it wasn't rolled just now,
+-- so it gets the outline the owner's own copy would have had
+local function highlightServerCopy(place: Folder)
+	local display = find(place, "RollStand_1", "RolledItem")
+	local item = rolledItems[place]
+	if display and item and not previews[place] and not display:FindFirstChildOfClass("Highlight") then
+		Rolling.AddHighlight(display, Rolling.GetOutcomeHighlight(item))
+	end
+end
+
+-- A roll put back from the owner's last visit lands without a spin here, so it gets the end of a
+-- reveal: the buy prompt, the outline and the rarity's glow
+local function showRestoredRoll(place: Folder)
+	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] or previews[place] then
+		return
+	end
+	local item = Items[place:GetAttribute(STAND_ITEM_ATTRIBUTE)]
+	if not item then
+		return
+	end
+
+	setRolledItem(place, item)
+	highlightServerCopy(place)
+	local rarityColor = Rarities[item.Rarity].Color
+	for _, glow in getGlowParts(place) do
+		glow.Color = rarityColor
+	end
+end
+
 local function randomFiller(previous: Items.Item?): Items.Item
 	local item
 	repeat
@@ -432,11 +462,17 @@ function RollController.Start()
 				descendant:Destroy()
 			else
 				FloatController.Float(descendant)
+				highlightServerCopy(place)
 			end
 		end)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
 			cancelSpin(place)
+			showRestoredRoll(place)
 		end)
+		place:GetAttributeChangedSignal(STAND_ITEM_ATTRIBUTE):Connect(function()
+			showRestoredRoll(place)
+		end)
+		showRestoredRoll(place)
 	end
 end
 
