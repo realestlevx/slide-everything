@@ -27,6 +27,11 @@ local function updateFloating()
 	end
 end
 
+-- Where an item resting at rest is floating right now, for things that have to meet one in the air
+function FloatController.GetCFrame(rest: CFrame): CFrame
+	return getFloatCFrame(rest, os.clock())
+end
+
 -- Bobs and turns the item around where it is now, until it's removed.
 -- Applied right away so a new item never shows a frame at its resting turn
 function FloatController.Float(item: BasePart)

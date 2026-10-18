@@ -1,7 +1,9 @@
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
+local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
@@ -22,26 +24,40 @@ local BuySlotResult = ReplicatedStorage.Remotes.BuySlotResult
 local SLOT_ITEM_NAME = "SlotItem"
 local RARITY_PART_NAME = "Rarity" -- Part in a slot tinted with its item's rarity color
 local SLOT_TEMPLATE_NAME = "Slot" -- Model in ServerStorage every slot is copied from
+local PASS_SLOT_TEMPLATE_NAME = "Paid_Slot" -- Model in ServerStorage that pass slots are copied from instead
 -- Invisible parts anywhere in a place marking where its slots go. Each stands in for its slot's
 -- Slot_Place and carries the slot's SlotNumber and Price attributes
 local SLOT_POSITION_NAME = "Slot_Position"
+-- On a slot that comes with the GamePasses.PaidSlots pass instead of a price: there for everyone to
+-- see from the start, and usable once the place's owner has the pass
+local GAME_PASS_ATTRIBUTE = "GamePass"
+-- Billboards in a slot that are only designs: each client copies them (the stats and buttons, and
+-- the "+ $" popups) and shows its copies, so the slot's own stay hidden, even in the server's view
+local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash" }
 
 local rarityPartColors: { [BasePart]: Color3 } = {} -- Each Rarity part's own color, for empty slots
 local partTransparencies: { [BasePart]: number } = {} -- Each slot part's own transparency, for once it's bought
+local passOwners: { [Player]: boolean } = {} -- Players who own the paid slots pass
 
 local SlotService = {}
 
--- Puts a copy of the slot template on each of the place's Slot_Position parts, with the part's
--- attributes. The part goes once its slot is there
-local function spawnSlots(place: Folder)
-	local template = ServerStorage:FindFirstChild(SLOT_TEMPLATE_NAME)
+-- A slot template in ServerStorage, with where its pivot sits from its Slot_Place, so each copy's
+-- Slot_Place lands on its marker. Warns and gives nil without one
+local function getTemplate(name: string): (Model?, CFrame)
+	local template = ServerStorage:FindFirstChild(name)
 	local templatePart = template and template:FindFirstChild(Places.SLOT_PART)
 	if not (template and template:IsA("Model") and templatePart and templatePart:IsA("BasePart")) then
-		warn(`ServerStorage needs a {SLOT_TEMPLATE_NAME} model with a {Places.SLOT_PART} part for slots to be placed`)
-		return
+		warn(`ServerStorage needs a {name} model with a {Places.SLOT_PART} part for its slots to be placed`)
+		return nil, CFrame.identity
 	end
-	-- Where the template's pivot sits from its Slot_Place, so each copy's Slot_Place lands on its marker
-	local pivotOffset = templatePart.CFrame:ToObjectSpace(template:GetPivot())
+	return template, templatePart.CFrame:ToObjectSpace(template:GetPivot())
+end
+
+-- Puts a copy of the slot template on each of the place's Slot_Position parts, with the part's
+-- attributes; pass slots get the pass slot template. The part goes once its slot is there
+local function spawnSlots(place: Folder)
+	local slotTemplate, slotOffset = getTemplate(SLOT_TEMPLATE_NAME)
+	local passTemplate, passOffset = getTemplate(PASS_SLOT_TEMPLATE_NAME)
 
 	for _, marker in place:GetDescendants() do
 		if not (marker:IsA("BasePart") and marker.Name == SLOT_POSITION_NAME) then
@@ -52,11 +68,23 @@ local function spawnSlots(place: Folder)
 			warn(`{marker:GetFullName()} needs a SlotNumber attribute to get a slot`)
 			continue
 		end
+		local isPass = marker:GetAttribute(GAME_PASS_ATTRIBUTE) == true
+		local template = if isPass then passTemplate else slotTemplate
+		local pivotOffset = if isPass then passOffset else slotOffset
+		if not template then
+			continue
+		end
 
 		local slot = template:Clone()
 		slot.Name = `Slot_{number}`
 		for name, value in marker:GetAttributes() do
 			slot:SetAttribute(name, value)
+		end
+		for _, billboardName in DESIGN_BILLBOARDS do
+			local billboard = slot:FindFirstChild(billboardName, true)
+			if billboard and billboard:IsA("BillboardGui") then
+				billboard.Enabled = false
+			end
 		end
 		slot:PivotTo(marker.CFrame * pivotOffset)
 		slot.Parent = place
@@ -95,28 +123,39 @@ local function show(slot: Model, owned: Items.OwnedItem?)
 	display.Parent = slot
 end
 
--- Free slots are always there; the rest once bought from the sign
-local function isUnlocked(data: PlayerDataService.Data?, slot: Model): boolean
+local function isPassSlot(slot: Model): boolean
+	return slot:GetAttribute(GAME_PASS_ATTRIBUTE) == true
+end
+
+-- Free slots are always there, pass slots once the owner has the pass, and the rest once bought from
+-- the sign
+local function isUnlocked(owner: Player?, data: PlayerDataService.Data?, slot: Model): boolean
+	if isPassSlot(slot) then
+		return owner ~= nil and passOwners[owner] == true
+	end
 	return Places.GetSlotPrice(slot) <= 0 or (data ~= nil and data.BoughtSlots[Places.GetSlotKey(slot)] == true)
 end
 
--- A slot that isn't bought yet isn't there: hidden for everyone. The Unlocked attribute tells clients
--- to keep its place prompt down, and the sign which slot is next
+-- A slot that isn't bought yet isn't there: hidden for everyone. Pass slots are always there, to
+-- show what the pass gets. The Unlocked attribute tells clients what its place prompt is for, and
+-- the sign which slot is next
 local function setUnlocked(slot: Model, unlocked: boolean)
 	slot:SetAttribute("Unlocked", unlocked)
+	local shown = unlocked or isPassSlot(slot)
 	for _, part in slot:GetDescendants() do
 		if part:IsA("BasePart") and part.Name ~= SLOT_ITEM_NAME then
 			local ownTransparency = partTransparencies[part] or part.Transparency
 			partTransparencies[part] = ownTransparency
-			part.Transparency = if unlocked then ownTransparency else 1
+			part.Transparency = if shown then ownTransparency else 1
 		end
 	end
 end
 
--- The next slot up for sale: the first, in SlotNumber order, that isn't free or bought yet
+-- The next slot up for sale: the first, in SlotNumber order, that isn't free or bought yet. Pass
+-- slots aren't sold on the sign
 local function getNextSlot(place: Folder, data: PlayerDataService.Data): Model?
 	for _, slot in Places.GetSlots(place) do
-		if not isUnlocked(data, slot) then
+		if not isPassSlot(slot) and not isUnlocked(nil, data, slot) then
 			return slot
 		end
 	end
@@ -124,11 +163,12 @@ local function getNextSlot(place: Folder, data: PlayerDataService.Data): Model?
 end
 
 -- What the place's Increase Slots sign shows, as attributes on the place: slots are streamed, so
--- clients can't always count them. NextSlotPrice is nil once every slot is bought
+-- clients can't always count them. NextSlotPrice is nil once every slot is bought. Pass slots
+-- don't count, as the sign doesn't sell them
 local function updateSign(place: Folder, data: PlayerDataService.Data?)
 	local unlocked = 0
 	for _, slot in Places.GetSlots(place) do
-		if isUnlocked(data, slot) then
+		if not isPassSlot(slot) and isUnlocked(nil, data, slot) then
 			unlocked += 1
 		end
 	end
@@ -184,7 +224,7 @@ local function dropMissingSlots(player: Player, place: Folder)
 
 	local keys = {}
 	for _, slot in Places.GetSlots(place) do
-		if isUnlocked(data, slot) then
+		if isUnlocked(player, data, slot) then
 			keys[Places.GetSlotKey(slot)] = true
 		end
 	end
@@ -212,7 +252,7 @@ local function refreshPlace(place: Folder)
 	end
 
 	for _, slot in Places.GetSlots(place) do
-		setUnlocked(slot, isUnlocked(data, slot))
+		setUnlocked(slot, isUnlocked(owner, data, slot))
 		local uid = data and data.Slots[Places.GetSlotKey(slot)]
 		local owned = if owner and uid then InventoryService.Find(owner, uid) else nil
 		show(slot, owned)
@@ -220,16 +260,29 @@ local function refreshPlace(place: Folder)
 	updateSign(place, data)
 end
 
--- The owner puts the item in their hands into an empty slot
+-- The owner puts the item in their hands into an empty slot. A pass slot they don't have yet sells
+-- them the pass instead
 local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
+	if place:GetAttribute("OwnerUserId") ~= player.UserId then
+		return
+	end
+	if isPassSlot(slot) and not passOwners[player] then
+		if GamePasses.PaidSlots > 0 then
+			MarketplaceService:PromptGamePassPurchase(player, GamePasses.PaidSlots)
+		else
+			warn("GamePasses.PaidSlots needs the paid slots pass's id before it can be sold")
+		end
+		return
+	end
+
 	local data = PlayerDataService.Get(player)
 	local owned = InventoryService.GetEquipped(player)
 	local item = owned and Items[owned.Id]
-	if place:GetAttribute("OwnerUserId") ~= player.UserId or not (data and owned and item) then
+	if not (data and owned and item) then
 		return
 	end
 	local key = Places.GetSlotKey(slot)
-	if data.Slots[key] or not isUnlocked(data, slot) then
+	if data.Slots[key] or not isUnlocked(player, data, slot) then
 		return
 	end
 
@@ -319,7 +372,39 @@ local function onBuySlot(player: Player, place: any)
 	BuySlotResult:FireClient(player, true)
 end
 
+local function givePass(player: Player)
+	passOwners[player] = true
+	local place = PlaceService.GetPlace(player)
+	if place then
+		refreshPlace(place)
+	end
+end
+
+-- Checked once as the player joins, and their pass slots open up if they have it
+local function checkPass(player: Player)
+	if GamePasses.PaidSlots <= 0 then
+		return
+	end
+	local ok, owns = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, GamePasses.PaidSlots)
+	if ok and owns and player.Parent == Players then
+		givePass(player)
+	end
+end
+
 function SlotService.Start()
+	for _, player in Players:GetPlayers() do
+		task.spawn(checkPass, player)
+	end
+	Players.PlayerAdded:Connect(checkPass)
+	Players.PlayerRemoving:Connect(function(player)
+		passOwners[player] = nil
+	end)
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, purchased)
+		if purchased and passId == GamePasses.PaidSlots then
+			givePass(player)
+		end
+	end)
+
 	for _, place in Places.GetAll() do
 		spawnSlots(place)
 

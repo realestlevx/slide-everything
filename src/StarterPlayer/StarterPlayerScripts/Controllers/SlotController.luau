@@ -1,5 +1,7 @@
 local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
@@ -7,6 +9,7 @@ local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
+local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local ButtonController = require(script.Parent.ButtonController)
@@ -24,6 +27,10 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local BILLBOARD_NAME = "Stuff_UpgradeDisplay"
 local SLOT_ITEM_NAME = "SlotItem"
 local PARTICLES_NAME = "Particles" -- Folder in the slot part with the emitters that burst on an upgrade
+local FINISH_NAME = "Finish" -- Attachment in the slot part with the emitters that burst when an item lands
+-- On a pass slot's prompt until its owner has the pass
+local BUY_TEXT = " Buy Slot"
+local BUY_TEXT_COLOR = Color3.fromRGB(40, 220, 70)
 
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
@@ -37,11 +44,37 @@ local POPUP_RISE_INFO = TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirec
 -- Fully faded as the rise ends, when the popup is removed
 local POPUP_FADE_INFO = TweenInfo.new(1, Enum.EasingStyle.Linear)
 
+-- Putting an item in a slot: on the player's own screen it flies out of their hand in an arc, the
+-- moment the prompt fires. Once it lands, the item the server put in springs up from a little
+-- smaller, the slot's particles burst and its rarity part lights up. Everyone else sees the landing
+local HELD_NAME = "HeldItem" -- The item in a character's hand, made by the server
+local FLY_TIME = 0.45 -- Seconds from the hand to the slot
+local FLY_ARC = 5 -- Studs the flight rises above a straight line
+local LAND_SCALE = 0.6 -- Share of its size the landed item springs up from
+local LAND_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local FLASH_TRANSPARENCY = 0 -- The rarity part at its brightest, fading back to its own transparency
+local FLASH_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local PLACE_TIMEOUT = 3 -- Seconds the flown item waits for the server's before going back to the hand
+local FRESH_TIME = 1 -- Seconds after a slot's ItemId changes that an item arriving in it is a new one
+local GIVE_UP_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+type Placing = {
+	Copy: BasePart, -- Flying from the hand, then floating where the item goes until the server's arrives
+	Rest: CFrame, -- Where the item sits in the slot before it floats
+	Held: BasePart, -- The item in the hand, hidden on this screen while its copy flies
+	Landed: boolean,
+}
+
 local slotPlaces: { [Model]: Folder } = {} -- Every slot seen so far -> its place
 local billboards: { [Model]: BillboardGui } = {} -- Slot -> the copy of its billboard in PlayerGui
 local priceColors: { [TextLabel]: Color3 } = {} -- Each upgrade price label's own color, taken before it first flashes
+-- Each pass slot prompt's own text color, taken before it first turns green to sell the pass
+local promptColors: { [ProximityPrompt]: Color3 } = {}
 local fadedPlaces: { [Folder]: boolean } = {} -- Places whose slots are faded out while their items drop
 local billboardSizes: { [BillboardGui]: UDim2 } = {} -- Each billboard's own size, taken before it first shrinks away
+local placing: { [Model]: Placing } = {} -- Slots this player is putting an item into right now
+local filledAt: { [Model]: number } = {} -- When each slot last got an ItemId
+local rarityTransparencies: { [BasePart]: number } = {} -- Each rarity part's own transparency, taken before it first flashes
 
 local SlotController = {}
 
@@ -109,7 +142,24 @@ local function refresh(slot: Model)
 
 	local slotPart = slot:FindFirstChild(Places.SLOT_PART)
 	local prompt = slotPart and slotPart:FindFirstChildOfClass("ProximityPrompt")
-	if prompt then
+	local unlocked = slot:GetAttribute("Unlocked") == true
+	if prompt and slot:GetAttribute("GamePass") == true and not unlocked then
+		-- A pass slot the owner doesn't have yet sells the pass, so its prompt is always up
+		local color = prompt:GetAttribute("ProximityTextColor")
+		if not promptColors[prompt] and typeof(color) == "Color3" then
+			promptColors[prompt] = color
+		end
+		prompt.ActionText = BUY_TEXT
+		prompt:SetAttribute("ProximityTextColor", BUY_TEXT_COLOR)
+		prompt:SetAttribute("ProximityTextGradient", nil)
+		prompt:SetAttribute("ProximityGradientText", nil)
+		PromptController.SetHidden(place, prompt, false)
+	elseif prompt then
+		-- Back to its own color once the pass is the owner's
+		if promptColors[prompt] then
+			prompt:SetAttribute("ProximityTextColor", promptColors[prompt])
+			promptColors[prompt] = nil
+		end
 		local held = InventoryController.GetEquippedItem()
 		-- The text is set while the prompt is still hidden, since the prompt UI only reads it when shown
 		if held then
@@ -118,7 +168,6 @@ local function refresh(slot: Model)
 			prompt:SetAttribute("ProximityGradientText", held.Name)
 		end
 		-- Only up while the player holds an item and the slot is bought and empty
-		local unlocked = slot:GetAttribute("Unlocked") == true
 		PromptController.SetHidden(place, prompt, item ~= nil or held == nil or not unlocked)
 	end
 end
@@ -135,6 +184,9 @@ local function watchSlot(place: Folder, slot: Model)
 	end
 	slotPlaces[slot] = place
 	slot:GetAttributeChangedSignal("ItemId"):Connect(function()
+		if slot:GetAttribute("ItemId") ~= nil then
+			filledAt[slot] = os.clock()
+		end
 		refresh(slot)
 	end)
 	slot:GetAttributeChangedSignal("ItemLevel"):Connect(function()
@@ -239,11 +291,11 @@ local function showEarned(slot: Model, amount: number)
 	task.delay(POPUP_RISE_INFO.Time, popup.Destroy, popup)
 end
 
--- One burst from every emitter in the slot's Particles folder, sized by its EmitCount attribute.
--- Emitted on this client only, so nobody else sees it
-local function burstParticles(slot: Model)
+-- One burst from every emitter in the named folder or attachment in the slot part, sized by its
+-- EmitCount attribute. Emitted on this client only, so nobody else sees it
+local function burstParticles(slot: Model, name: string)
 	local slotPart = slot:FindFirstChild(Places.SLOT_PART)
-	local particles = slotPart and slotPart:FindFirstChild(PARTICLES_NAME)
+	local particles = slotPart and slotPart:FindFirstChild(name)
 	if not particles then
 		return
 	end
@@ -280,11 +332,142 @@ local function showUpgradeError(slot: Model)
 	TweenService:Create(price, PRICE_FLASH, { TextColor3 = color }):Play()
 end
 
+-- The slot's rarity part lights up, then fades back to how see-through it is
+local function flashRarity(slot: Model)
+	local part = slot:FindFirstChild("Rarity")
+	if not (part and part:IsA("BasePart")) then
+		return
+	end
+	local own = rarityTransparencies[part] or part.Transparency
+	rarityTransparencies[part] = own
+	part.Transparency = FLASH_TRANSPARENCY
+	TweenService:Create(part, FLASH_INFO, { Transparency = own }):Play()
+end
+
+-- The item springs up into its slot from a little smaller, with a burst and a flash
+local function land(slot: Model, display: BasePart)
+	local id = slot:GetAttribute("ItemId")
+	local item = if typeof(id) == "string" then Items[id] else nil
+	local template = item and ReplicatedStorage.Items:FindFirstChild(item.MeshName)
+	local size = if template and template:IsA("BasePart") then template.Size else display.Size
+	display.Size = size * LAND_SCALE
+	TweenService:Create(display, LAND_INFO, { Size = size }):Play()
+	burstParticles(slot, FINISH_NAME)
+	flashRarity(slot)
+end
+
+-- The flown copy has landed and the server's item is in: one swaps for the other as it lands.
+-- Until the server's arrives, the copy floats where it'll be
+local function finishPlacing(slot: Model)
+	local entry = placing[slot]
+	if not (entry and entry.Landed) then
+		return
+	end
+	local display = slot:FindFirstChild(SLOT_ITEM_NAME)
+	if not (display and display:IsA("BasePart")) then
+		entry.Copy.CFrame = entry.Rest
+		FloatController.Float(entry.Copy)
+		return
+	end
+
+	placing[slot] = nil
+	entry.Copy:Destroy()
+	if not fadedPlaces[slotPlaces[slot]] then
+		display.LocalTransparencyModifier = 0
+	end
+	land(slot, display)
+	playSound("Place")
+end
+
+-- The server didn't put the item in after all: the copy fades and the hand has it again
+local function givePlacingUp(slot: Model, entry: Placing)
+	if placing[slot] ~= entry then
+		return
+	end
+	placing[slot] = nil
+	TweenService:Create(entry.Copy, GIVE_UP_INFO, { LocalTransparencyModifier = 1 }):Play()
+	task.delay(GIVE_UP_INFO.Time, entry.Copy.Destroy, entry.Copy)
+	entry.Held.LocalTransparencyModifier = 0
+	for _, descendant in entry.Held:GetDescendants() do
+		if descendant:IsA("BillboardGui") then
+			descendant.Enabled = true
+		end
+	end
+end
+
+-- A copy of the held item flies from the hand to the slot in an arc, growing to its full size and
+-- turning to how it floats there. Made on this screen only, as the prompt fires
+local function flyIn(slot: Model, slotPart: BasePart, item: Items.Item, held: BasePart)
+	local copy = Rolling.CreateDisplay(item, slotPart)
+	local entry: Placing = { Copy = copy, Rest = copy.CFrame, Held = held, Landed = false }
+	local fullSize = copy.Size
+	local from = held.CFrame
+	local fromSize = held.Size
+	copy.CFrame = from
+	copy.Size = fromSize
+	copy.Parent = workspace
+	placing[slot] = entry
+
+	-- The real one is still in the hand until the server takes it, so it's hidden here meanwhile
+	held.LocalTransparencyModifier = 1
+	for _, descendant in held:GetDescendants() do
+		if descendant:IsA("BillboardGui") then
+			descendant.Enabled = false
+		end
+	end
+
+	local started = os.clock()
+	local connection: RBXScriptConnection
+	connection = RunService.RenderStepped:Connect(function()
+		local alpha = math.min((os.clock() - started) / FLY_TIME, 1)
+		local eased = alpha * alpha * (3 - 2 * alpha)
+		local target = FloatController.GetCFrame(entry.Rest)
+		local top = (from.Position + target.Position) / 2 + Vector3.yAxis * FLY_ARC
+		local position = from.Position:Lerp(top, eased):Lerp(top:Lerp(target.Position, eased), eased)
+		copy.CFrame = from.Rotation:Lerp(target.Rotation, eased) + position
+		copy.Size = fromSize:Lerp(fullSize, eased)
+		if alpha >= 1 then
+			connection:Disconnect()
+			entry.Landed = true
+			finishPlacing(slot)
+		end
+	end)
+	task.delay(PLACE_TIMEOUT, givePlacingUp, slot, entry)
+end
+
+-- The player's own place prompt on an empty slot they can use, while holding an item. The server
+-- makes the same checks before it puts the item in
+local function onPromptTriggered(prompt: ProximityPrompt)
+	local slot = getSlot(prompt)
+	local place = slot and slotPlaces[slot]
+	if not (slot and place and place:GetAttribute("OwnerUserId") == LocalPlayer.UserId) then
+		return
+	end
+	if placing[slot] or getItem(slot) or slot:GetAttribute("Unlocked") ~= true then
+		return
+	end
+	local character = LocalPlayer.Character
+	local held = character and character:FindFirstChild(HELD_NAME)
+	local item = InventoryController.GetEquippedItem()
+	local slotPart = prompt.Parent
+	if held and held:IsA("BasePart") and item and slotPart and slotPart:IsA("BasePart") then
+		flyIn(slot, slotPart, item, held)
+	end
+end
+
 local function onDescendantAdded(place: Folder, descendant: Instance)
 	if descendant.Name == SLOT_ITEM_NAME and descendant:IsA("BasePart") then
 		FloatController.Float(descendant)
+		local slot = descendant.Parent
 		if fadedPlaces[place] then
 			descendant.LocalTransparencyModifier = 1
+		end
+		if slot and slot:IsA("Model") and placing[slot] then
+			-- Hidden until the flown copy lands on it
+			descendant.LocalTransparencyModifier = 1
+			finishPlacing(slot)
+		elseif slot and slot:IsA("Model") and os.clock() - (filledAt[slot] or -math.huge) < FRESH_TIME then
+			land(slot, descendant)
 		end
 		return
 	end
@@ -353,6 +536,7 @@ function SlotController.Start()
 
 	-- Picking an item up or putting it away shows or hides the place prompts
 	LocalPlayer:GetAttributeChangedSignal("EquippedItem"):Connect(refreshAll)
+	ProximityPromptService.PromptTriggered:Connect(onPromptTriggered)
 
 	UpgradeResult.OnClientEvent:Connect(function(slot: Model?, upgraded: boolean)
 		-- Nil when the slot has streamed out by the time the answer arrives
@@ -360,7 +544,7 @@ function SlotController.Start()
 			return
 		elseif upgraded then
 			playSound("Buy")
-			burstParticles(slot)
+			burstParticles(slot, PARTICLES_NAME)
 		else
 			showUpgradeError(slot)
 		end
