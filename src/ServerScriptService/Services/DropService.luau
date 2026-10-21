@@ -9,6 +9,7 @@ local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 local InventoryService = require(script.Parent.InventoryService)
 local PlaceService = require(script.Parent.PlaceService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local SignUpgradeService = require(script.Parent.SignUpgradeService)
 
 local DropResult = ReplicatedStorage.Remotes.DropResult
 
@@ -26,6 +27,7 @@ type DroppedItem = {
 
 type Drop = {
 	StartedAt: number,
+	Speed: number, -- The owner's Sliding Speed when it started, so buying more mid-drop doesn't count
 	Items: { [string]: DroppedItem }, -- Slot key -> what was in it
 }
 
@@ -68,7 +70,7 @@ local function onDrop(place: Folder, player: Player)
 	if next(dropped) == nil then
 		return
 	end
-	drops[player] = { StartedAt = os.clock(), Items = dropped }
+	drops[player] = { StartedAt = os.clock(), Speed = SignUpgradeService.GetValue(player, "SlideSpeed"), Items = dropped }
 end
 
 -- One item's finished run: the share of the slide it covered and the multiplier of the last wall it
@@ -93,7 +95,13 @@ local function onResult(player: Player, slotKey: any, progress: any, multiplier:
 	end
 	dropped.Paid = true
 
-	local pay = Drops.GetPay(dropped.Item, dropped.Level, math.min(progress, 1), math.min(multiplier, highestMultiplier))
+	local pay = Drops.GetPay(
+		dropped.Item,
+		dropped.Level,
+		math.min(progress, 1),
+		math.min(multiplier, highestMultiplier),
+		drop.Speed
+	)
 	data.CollectCash += pay
 	table.insert(data.CollectItems, dropped.Item.Id)
 	while #data.CollectItems > Drops.MAX_PILE do

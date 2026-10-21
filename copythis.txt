@@ -1,0 +1,87 @@
+start : $1000
+
+common: $100 (1 in 3) $12/s
+	$400 (1 in 5) $14/s
+	$800 (1 in 11) $50/s
+
+uncommon: $38k (1 in 45) $120/s
+	$50k (1 in 67) $180/s
+	$110k (1 in 90) $225/s
+
+rare: $500k (1 in 600) 839/s
+	$860k (1 in 960) 1.26k/s
+	$1.7M (1 in 1.1k) 2.24k/s
+
+epic: 	$2M (1 in 5k) 3.15k
+	$3.2M (1 in 7.2k) $9.44k/s
+	$4M (1 in 8k) $11.31k/s
+
+Legendary: $14 (1 in 70k) 39.43k/s 
+	$26M (1 in 96k) 52k/s
+	$36M (1 in 112k) 80k/s
+
+Mythic: $550M (1 in 1.7M) 240k/s
+	 $2.6B (1 in 2M) 700k/s
+
+Exotic: $23B (1 in 2.5M) 5.4M/s
+	
+
+
+Secret: $81B (1 in 4.5M) 20M/s
+	 $120B (1 in 8.8M) 23.5M/s
+	$140B (1 in 13M) 45M/s
+
+Godly:	$1.1T (1 in 160M) 700M/s
+	$2.6T (1 in 208M) 1.5B/s 
+
+
+Boundless:
+
+
+Admin: $1.5Qi (1 in 350B) 15B/s
+
+Upgrades:
+Roll Slots: $800 > $10k > $250k > $2M > $51M >
+Slot upgrade $100 > $300 > $1k > 2.5k > 7k > 18k > 50k
+Luck upgrade: $300 > $437 > $765 ... (max 100x) past 100x it can be upgraded via gems
+Speed upgrade: $150 > $233 > $361 > $560 > 868 > $1.35k ...
+
+Floor 2: $700k 
+Floor 3: $61M 
+Floor 4: $1.2B
+
+tutorial:
+1 Roll an item
+2 Buy Item
+3 Buy Slot
+w4 Equip Item
+5 Place Item
+6 Upgrade Item
+7 Slide Items
+8 Collect Items
+9 Buy an upgrade (luck)
+10 Upgrade slide
+- dont let the player do anything else if the tutorial isnt finished yet.
+
+Offline earnings:
+0.5x of the total $/s, has a gamepass to 4x it for 25R$
+
+Pop ups:
+Admin abuse
+Holidays (Halloween, Summer, ect.)
+
+
+gamepasses:
+	4x offline rewards (1 time claim)
+	2x cash (4R$) > 4x cash (12R$) > 6x cash (29R$)
+	Lucky Roll: 49R$ (+99x luck for 1 spin)
+	Starter pack:
+		- Epic Item
+		- $1M
+		- 1 Lucky Roll
+		 
+	auto collect (9R$)
+
+Notes:
+some items in the same rerity are better than the rest.
+avaliable upgrade are often highlighted such as slide and floor upgrades. (1st time purchase only, only those that are not mentioned in the tutorial)

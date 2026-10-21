@@ -7,7 +7,7 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
 
 local PROFILE_TEMPLATE = {
-	Money = 2500, -- Starting money: a Toy Car, a second slot and another car
+	Money = 1000, -- Starting money
 	Gems = 0,
 	MoneyPerSecond = 0,
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought

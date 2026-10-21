@@ -7,7 +7,6 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
-local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local PlayerDataService = require(script.Parent.PlayerDataService)
@@ -199,15 +198,13 @@ end
 
 -- Slots are the only income, so a player who owns nothing and can't pay for anything their rolls
 -- land on could never earn again. They're topped up to what the cheapest of those costs instead.
--- Checked on join and after anything that spends money or deletes an item. Luck is read straight
--- from SignUpgrades so SignUpgradeService can call this without a require loop
+-- Checked on join and after anything that spends money or deletes an item
 function InventoryService.EnsureCanStart(player: Player)
 	local data = PlayerDataService.Get(player)
 	if not (data and #data.Inventory == 0) then
 		return
 	end
-	local luck = SignUpgrades.GetValue("Luck", data.UpgradeLevels.Luck or 1)
-	local cheapest = Rolling.GetCheapestPrice(luck)
+	local cheapest = Rolling.GetCheapestPrice()
 	if data.Money < cheapest then
 		PlayerDataService.SetMoney(player, cheapest)
 	end

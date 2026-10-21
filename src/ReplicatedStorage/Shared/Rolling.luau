@@ -19,33 +19,57 @@ local function getWeight(item: Items.Item): number
 	return (item.Chance or 0) / 100
 end
 
--- Every item that can roll, rarest first, with its share of all the odds together (adding up to 1)
+-- Every item that can roll, rarest first, with its share of all the odds together (adding up to 1).
+-- Items rarer than Common keep their written odds, and the Common items share what's left between
+-- them. Without Commons, or with the rest at 100% or more, every share is scaled to fit instead
 local rollable: { Items.Item } = {}
 local shares: { [Items.Item]: number } = {}
 local totalWeight = 0
+local commonWeight = 0
 
+for _, item in Items do
+	local weight = getWeight(item)
+	totalWeight += weight
+	if item.Rarity == "Common" then
+		commonWeight += weight
+	end
+end
+local restWeight = totalWeight - commonWeight
+local fillCommons = commonWeight > 0 and restWeight < 1
 for _, item in Items do
 	local weight = getWeight(item)
 	if weight > 0 then
 		table.insert(rollable, item)
-		totalWeight += weight
+		shares[item] = if not fillCommons
+			then weight / totalWeight
+			elseif item.Rarity == "Common" then weight * (1 - restWeight) / commonWeight
+			else weight
 	end
 end
-for _, item in rollable do
-	shares[item] = getWeight(item) / totalWeight
-end
 table.sort(rollable, function(a, b)
-	return shares[a] < shares[b]
+	return if shares[a] ~= shares[b] then shares[a] < shares[b] else a.Id < b.Id
 end)
 
--- The roll is divided by the luck, then matched against the items' odds stacked rarest first. At 1x
--- luck the odds are exactly what the stands show. At 50x, a 1 in 2M item hits on any roll under
--- 50 in 2M, so every item's chance is 50x and the extra comes out of the commonest items' share
+-- The item's share with luck: multiplied by the luck to the item's LuckPower (see Items)
+local function getLuckyWeight(item: Items.Item, luck: number): number
+	return shares[item] * luck ^ (item.LuckPower or 1)
+end
+
+-- Every item's share is changed by the luck as its LuckPower says, then all of them are scaled back
+-- to add up to 1 and the roll is matched against them. At 1x luck the odds are exactly what the
+-- stands show. Luck that boosts the rare items and shrinks the Commons takes both ways at once: at 9x,
+-- a Common at -1 is 9x less likely next to an item at 1, so the rare items gain more than 9x
 function Rolling.Pick(rng: Random, luck: number?): Items.Item
-	local roll = rng:NextNumber() / math.max(luck or 1, 1)
+	local multiplier = math.max(luck or 1, 1)
+	local total = 0
+	for _, item in rollable do
+		total += getLuckyWeight(item, multiplier)
+	end
+
+	local roll = rng:NextNumber() * total
 	local reach = 0
 	for _, item in rollable do
-		reach += shares[item]
+		reach += getLuckyWeight(item, multiplier)
 		if roll < reach then
 			return item
 		end
@@ -55,18 +79,12 @@ function Rolling.Pick(rng: Random, luck: number?): Items.Item
 	return rollable[#rollable]
 end
 
--- What the cheapest item a roll at this luck can land on costs. Enough luck skips the commonest
--- items altogether, so their price stops counting
-function Rolling.GetCheapestPrice(luck: number?): number
-	local limit = 1 / math.max(luck or 1, 1)
+-- What the cheapest item a roll can land on costs. Luck makes items rarer or likelier, but never
+-- rules one out
+function Rolling.GetCheapestPrice(): number
 	local cheapest = math.huge
-	local reach = 0
 	for _, item in rollable do
-		if reach >= limit then
-			break
-		end
 		cheapest = math.min(cheapest, item.Price)
-		reach += shares[item]
 	end
 	return cheapest
 end
@@ -145,11 +163,15 @@ function Rolling.AddHighlight(display: BasePart, style: { [string]: any }): { Hi
 	return highlights
 end
 
+-- Shown over an item while the player is close enough to use it (see FocusController). It's only
+-- there for a moment, so GetHighlights leaves it out
+Rolling.FOCUS_HIGHLIGHT_NAME = "FocusHighlight"
+
 -- The highlights AddHighlight gave the item
 function Rolling.GetHighlights(display: BasePart): { Highlight }
 	local highlights = {}
 	for _, descendant in display:GetDescendants() do
-		if descendant:IsA("Highlight") then
+		if descendant:IsA("Highlight") and descendant.Name ~= Rolling.FOCUS_HIGHLIGHT_NAME then
 			table.insert(highlights, descendant)
 		end
 	end

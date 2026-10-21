@@ -58,7 +58,7 @@ local function onBuy(player: Player, place: any, name: any)
 	PlayerDataService.AddMoney(player, -price)
 	data.UpgradeLevels[name] = level + 1
 	place:SetAttribute(`{name}Level`, level + 1)
-	-- Same as for slots, and more luck can also rule out the cheapest item
+	-- Same as for slots: spending can leave a player with nothing who can't afford a roll
 	InventoryService.EnsureCanStart(player)
 	BuyUpgradeResult:FireClient(player, name, true)
 end

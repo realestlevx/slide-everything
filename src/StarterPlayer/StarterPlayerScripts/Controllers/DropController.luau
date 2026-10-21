@@ -8,6 +8,7 @@ local Drops = require(ReplicatedStorage.Shared.Drops)
 local Items = require(ReplicatedStorage.Shared.Items)
 local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
+local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 
 local CollectController = require(script.Parent.CollectController)
 local HudController = require(script.Parent.HudController)
@@ -27,9 +28,11 @@ local SLOT_ITEM_NAME = "SlotItem"
 
 -- Dropped items barely grip, and their grip outweighs the slide's, so they slide down even the
 -- gentlest ramp. SLIDE_SPEED then keeps them from going faster than that down the slide;
--- falling isn't slowed
+-- falling isn't slowed. The Sliding Speed upgrade raises it by SPEED_SHARE of its own rise, so 3x
+-- pays 3x but slides at 2x, and there's still time to steer
 local ITEM_PHYSICS = PhysicalProperties.new(0.7, 0.05, 0.2, 100, 1)
 local SLIDE_SPEED = 30 -- Studs per second, before any Sliding Speed upgrade
+local SPEED_SHARE = 0.5
 local STEER_SPEED = 15 -- Studs per second sideways while the player steers
 -- Past the steering zone, items grip sideways like sleds: they slide where they're steered and stop
 -- drifting once let go, instead of skidding off. How quickly they take up a new sideways speed;
@@ -97,6 +100,8 @@ type Drop = {
 	SteerZone: BasePart?, -- Without one, items can be steered from the start
 	Ending: boolean,
 	Distance: number, -- Studs down the slide that the furthest item has got, shown while it drops
+	Speed: number, -- The owner's Sliding Speed upgrade, which multiplies the pay
+	SlideSpeed: number, -- Studs per second items are held to down the slide
 	-- Finds the walls between the camera and the items and the ground under the items, but not the items
 	WorldRay: RaycastParams,
 }
@@ -141,7 +146,8 @@ local function showStats(current: Drop)
 	for _, dropped in current.Items do
 		if not dropped.Done then
 			local position = dropped.Part.Position
-			dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, getProgress(current, position), dropped.Multiplier)
+			local progress = getProgress(current, position)
+			dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, progress, dropped.Multiplier, current.Speed)
 			current.Distance = math.max(current.Distance, (position - current.Start):Dot(current.Direction))
 		end
 		cash += dropped.Pay
@@ -155,7 +161,7 @@ local function finishItem(current: Drop, dropped: DroppedItem, progress: number)
 	if dropped.Done then
 		return
 	end
-	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, progress, dropped.Multiplier)
+	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, progress, dropped.Multiplier, current.Speed)
 	dropped.Done = true
 	DropResult:FireServer(dropped.SlotKey, progress, dropped.Multiplier)
 	CollectController.AddToPile(current.Place, dropped.Item)
@@ -253,7 +259,7 @@ local function endDrop()
 end
 
 -- Items that come to rest or go off the slide finish where they are. The rest are held to
--- SLIDE_SPEED down the slide, lie along the ground and, past the steering zone, go where they're
+-- the slide speed down the slide, lie along the ground and, past the steering zone, go where they're
 -- steered as a pack. The camera aims at them, and once none are left, the drop ends after a moment
 local function followItems(current: Drop, dt: number)
 	local active: { DroppedItem } = {}
@@ -303,8 +309,8 @@ local function followItems(current: Drop, dt: number)
 		local across = flatten(itemVelocity)
 		local sideways = across:Dot(right)
 		local forward = across - right * sideways
-		if forward.Magnitude > SLIDE_SPEED then
-			forward = forward.Unit * SLIDE_SPEED
+		if forward.Magnitude > current.SlideSpeed then
+			forward = forward.Unit * current.SlideSpeed
 		end
 		local zone = current.SteerZone
 		if not dropped.Steerable and (not zone or zone.CFrame:PointToObjectSpace(part.Position).Y < 0) then
@@ -450,6 +456,10 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	worldRay.FilterType = Enum.RaycastFilterType.Exclude
 	worldRay.RespectCanCollide = true
 
+	-- The server keeps the level on the place for everyone, and pays by the same one
+	local speedLevel = place:GetAttribute("SlideSpeedLevel")
+	local speed = SignUpgrades.GetValue("SlideSpeed", if typeof(speedLevel) == "number" then speedLevel else 1)
+
 	local current: Drop = {
 		Place = place,
 		Prompt = prompt,
@@ -465,6 +475,8 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		SteerZone = if zone and zone:IsA("BasePart") then zone else nil,
 		Ending = false,
 		Distance = 0,
+		Speed = speed,
+		SlideSpeed = SLIDE_SPEED * (1 + (speed - 1) * SPEED_SHARE),
 		WorldRay = worldRay,
 	}
 	drop = current

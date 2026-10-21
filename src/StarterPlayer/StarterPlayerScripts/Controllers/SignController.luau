@@ -55,7 +55,8 @@ local function show(panel: Panel, value: string, price: number?)
 		panel.Value.Text = value
 	end
 	if panel.Price then
-		panel.Price.Text = if price then FormatMoney(price) else MAX_TEXT
+		-- Two decimals, so prices like $1.35K show in full
+		panel.Price.Text = if price then FormatMoney(price, 2) else MAX_TEXT
 	end
 end
 

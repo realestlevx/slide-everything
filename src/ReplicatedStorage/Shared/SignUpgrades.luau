@@ -12,24 +12,49 @@ export type Upgrade = {
 	Levels: { Level },
 }
 
-local MAX_LUCK = 100
-local LUCK_PRICE = 10000 -- What 2x costs
-local LUCK_GROWTH = 1.2 -- Each level costs this much more again on top of the (N - 1)² below
-
--- Rounded to 2 significant digits, so the price the panel shows (like "$3.5M") is the exact price
+-- Rounded to 3 significant digits, so the price the panel shows (like "$1.35K") is the exact price
 local function roundPrice(price: number): number
-	local unit = 10 ^ math.max(math.floor(math.log10(price)) - 1, 0)
+	local unit = 10 ^ math.max(math.floor(math.log10(price)) - 2, 0)
 	return math.round(price / unit) * unit
 end
 
--- 1x, 2x, 3x and so on up to MAX_LUCK. Going up to Nx costs
--- LUCK_PRICE * (N - 1)² * LUCK_GROWTH^(N - 2): 10K for 2x, 3.5M for 10x, 380M for 25x, 150B for 50x,
--- 33T for 75x and 5.6Qa for 100x
+-- The given prices for the first levels above 1, then each one growth times the one before, rounded
+-- as it goes like the economy sheet's: 150 > 233 > 361 > 560 > 868 > 1.35K
+local function getPrices(first: { number }, growth: number, count: number): { number }
+	local prices = table.clone(first)
+	while #prices < count do
+		table.insert(prices, roundPrice(prices[#prices] * growth))
+	end
+	return prices
+end
+
+-- 1x, 2x, 3x and so on up to MAX_LUCK: 300 for 2x, 437 for 3x and 765 for 4x, then 1.3x more each
+-- level, about 3.7K for 10x, 190K for 25x, 130M for 50x, 92B for 75x and 65T for 100x
+local MAX_LUCK = 100
+local LUCK_PRICES = { 300, 437, 765 } -- What 2x, 3x and 4x cost
+local LUCK_GROWTH = 1.3
+
 local function getLuckLevels(): { Level }
+	local prices = getPrices(LUCK_PRICES, LUCK_GROWTH, MAX_LUCK - 1)
 	local levels: { Level } = { { Value = 1 } }
 	for luck = 2, MAX_LUCK do
-		local price = LUCK_PRICE * (luck - 1) ^ 2 * LUCK_GROWTH ^ (luck - 2)
-		table.insert(levels, { Value = luck, Price = roundPrice(price) })
+		table.insert(levels, { Value = luck, Price = prices[luck - 1] })
+	end
+	return levels
+end
+
+-- 1x, 1.1x, 1.2x and so on up to 3x. Drop pay is multiplied by it, so a drop at 3x pays 30 seconds of
+-- income instead of 10. 150 for 1.1x, then 1.55x more each level, about 620K for 3x. Values are made
+-- from whole tenths so they show as "1.1x", not "1.1000000000000001x"
+local SPEED_STEPS = 20
+local SPEED_PRICE = 150 -- What 1.1x costs
+local SPEED_PRICE_GROWTH = 1.55
+
+local function getSpeedLevels(): { Level }
+	local prices = getPrices({ SPEED_PRICE }, SPEED_PRICE_GROWTH, SPEED_STEPS)
+	local levels: { Level } = { { Value = 1 } }
+	for step = 1, SPEED_STEPS do
+		table.insert(levels, { Value = (10 + step) / 10, Price = prices[step] })
 	end
 	return levels
 end
@@ -41,6 +66,12 @@ local SignUpgrades = {
 			Frame = "Luck_Frame",
 			Suffix = "x",
 			Levels = getLuckLevels(),
+		},
+		-- Multiplies drop pay, and how fast items slide; see Drops.GetPay and DropController
+		SlideSpeed = {
+			Frame = "Speed_Frame",
+			Suffix = "x",
+			Levels = getSpeedLevels(),
 		},
 	} :: { [string]: Upgrade },
 }

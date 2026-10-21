@@ -12,9 +12,10 @@ local Drops = {
 	MAX_PILE = 50, -- Finished items shown piled on the collect pad. Older ones still count, just unseen
 }
 
--- What an item earns for its run. Progress is the share of the slide it covered, 0 to 1
-function Drops.GetPay(item: Items.Item, level: number, progress: number, multiplier: number): number
-	return Upgrades.GetMoneyPerSecond(item, level) * Drops.SECONDS * progress * multiplier
+-- What an item earns for its run. Progress is the share of the slide it covered, 0 to 1, and speed
+-- is the owner's Sliding Speed upgrade (see SignUpgrades)
+function Drops.GetPay(item: Items.Item, level: number, progress: number, multiplier: number, speed: number): number
+	return Upgrades.GetMoneyPerSecond(item, level) * Drops.SECONDS * progress * multiplier * speed
 end
 
 return Drops

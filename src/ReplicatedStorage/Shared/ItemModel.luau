@@ -22,9 +22,14 @@ type Record = {
 	Attachments: { [Attachment]: Vector3 }, -- Each one's Position at full size
 	Effects: { [Instance]: boolean }, -- Each one's own Enabled
 	Scale: number,
+	-- Extra growth on top of Scale while the player is close enough to use the item, so the two
+	-- tween on their own without undoing each other
+	Focus: number,
 	Transparency: number,
 	Tween: Tween?, -- Scaling, if it's running
 	ScaleValue: NumberValue?,
+	FocusTween: Tween?,
+	FocusValue: NumberValue?,
 }
 
 local records: { [BasePart]: Record } = setmetatable({}, { __mode = "k" }) :: any
@@ -51,9 +56,12 @@ local function getRecord(root: BasePart): Record
 		Attachments = {},
 		Effects = {},
 		Scale = 1,
+		Focus = 1,
 		Transparency = 0,
 		Tween = nil,
 		ScaleValue = nil,
+		FocusTween = nil,
+		FocusValue = nil,
 	}
 	for _, descendant in root:GetDescendants() do
 		if descendant:IsA("Weld") and descendant.Part0 == root and descendant.Part1 then
@@ -127,8 +135,8 @@ function ItemModel.GetScale(root: BasePart): number
 	return getRecord(root).Scale
 end
 
-local function applyScale(root: BasePart, record: Record, scale: number)
-	record.Scale = scale
+local function applyScale(root: BasePart, record: Record)
+	local scale = record.Scale * record.Focus
 	root.Size = record.Size * scale
 	for _, inner in record.Inner do
 		inner.Part.Size = inner.Size * scale
@@ -146,7 +154,8 @@ function ItemModel.SetScale(root: BasePart, scale: number)
 		record.Tween:Cancel()
 		record.Tween = nil
 	end
-	applyScale(root, record, scale)
+	record.Scale = scale
+	applyScale(root, record)
 end
 
 -- Scales the whole item to the given share of full size over the tween, from wherever it is
@@ -160,13 +169,37 @@ function ItemModel.TweenScale(root: BasePart, info: TweenInfo, scale: number)
 		value = Instance.new("NumberValue")
 		value.Value = record.Scale
 		value.Changed:Connect(function(current: number)
-			applyScale(root, record, current)
+			record.Scale = current
+			applyScale(root, record)
 		end)
 		record.ScaleValue = value
 	end
 	value.Value = record.Scale
 	local tween = TweenService:Create(value, info, { Value = scale })
 	record.Tween = tween
+	tween:Play()
+end
+
+-- Grows the whole item by this much on top of its scale over the tween, from wherever it is, or
+-- back to 1. For showing the player they're close enough to use it
+function ItemModel.TweenFocus(root: BasePart, info: TweenInfo, focus: number)
+	local record = getRecord(root)
+	if record.FocusTween then
+		record.FocusTween:Cancel()
+	end
+	local value = record.FocusValue
+	if not value then
+		value = Instance.new("NumberValue")
+		value.Value = record.Focus
+		value.Changed:Connect(function(current: number)
+			record.Focus = current
+			applyScale(root, record)
+		end)
+		record.FocusValue = value
+	end
+	value.Value = record.Focus
+	local tween = TweenService:Create(value, info, { Value = focus })
+	record.FocusTween = tween
 	tween:Play()
 end
 
