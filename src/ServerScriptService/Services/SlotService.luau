@@ -143,7 +143,7 @@ local function setUnlocked(slot: Model, unlocked: boolean)
 	slot:SetAttribute("Unlocked", unlocked)
 	local shown = unlocked or isPassSlot(slot)
 	for _, part in slot:GetDescendants() do
-		if part:IsA("BasePart") and part.Name ~= SLOT_ITEM_NAME then
+		if part:IsA("BasePart") and part.Name ~= SLOT_ITEM_NAME and not part:FindFirstAncestor(SLOT_ITEM_NAME) then
 			local ownTransparency = partTransparencies[part] or part.Transparency
 			partTransparencies[part] = ownTransparency
 			part.Transparency = if shown then ownTransparency else 1
@@ -316,8 +316,9 @@ local function onRemove(player: Player, slot: any)
 	updateMoneyPerSecond(player)
 end
 
--- The slot's Upgrade button: the item in it goes up a level, if the player can pay for it. The
--- level is the item's own, so it keeps it when taken back out of the slot
+-- The slot's Upgrade button: the item in it goes up a level, if it isn't at the top level already and
+-- the player can pay for it. The level is the item's own, so it keeps it when taken back out of the
+-- slot
 local function onUpgrade(player: Player, slot: any)
 	local data = PlayerDataService.Get(player)
 	if not (data and isOwnSlot(player, slot)) then
@@ -332,7 +333,7 @@ local function onUpgrade(player: Player, slot: any)
 
 	local level = Upgrades.GetLevel(owned)
 	local cost = Upgrades.GetCost(item, level)
-	if data.Money < cost then
+	if level >= Upgrades.MAX_LEVEL or data.Money < cost then
 		UpgradeResult:FireClient(player, slot, false)
 		return
 	end

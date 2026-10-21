@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ApplyGradient = require(script.Parent.ApplyGradient)
 local FormatMoney = require(script.Parent.FormatMoney)
+local ItemModel = require(script.Parent.ItemModel)
 local Items = require(script.Parent.Items)
 local Rarities = require(script.Parent.Rarities)
 
@@ -76,21 +77,16 @@ function Rolling.GetOneIn(item: Items.Item): number
 	return if share then 1 / share else math.huge
 end
 
--- A visual-only copy of the item's mesh (no hitbox), centered in Roll_Place
-function Rolling.CreateDisplay(item: Items.Item, rollPlace: BasePart): MeshPart
-	local display = ReplicatedStorage.Items[item.MeshName]:Clone()
-	for _, child in display:GetChildren() do
-		if child:IsA("BasePart") or child:IsA("WeldConstraint") or child:IsA("JointInstance") then
-			child:Destroy()
-		end
-	end
+-- A visual-only copy of the item, with any parts inside it, centered in Roll_Place. Resize and fade
+-- it through ItemModel, so the parts inside go along
+function Rolling.CreateDisplay(item: Items.Item, rollPlace: BasePart): BasePart
+	local display = ReplicatedStorage.Items[item.MeshName]:Clone() :: BasePart
+	ItemModel.Prepare(display)
+	ItemModel.SetVisualOnly(display)
 
 	display.Anchored = true
-	display.CanCollide = false
-	display.CanTouch = false
-	display.CanQuery = false
 	-- Keep the mesh's original rotation, relative to the stand in case a place is turned
-	display.CFrame = rollPlace.CFrame * display.CFrame.Rotation
+	ItemModel.PivotTo(display, rollPlace.CFrame * display.CFrame.Rotation)
 
 	return display
 end
@@ -130,14 +126,34 @@ function Rolling.GetOutcomeHighlight(item: Items.Item): { [string]: any }
 	}
 end
 
-function Rolling.AddHighlight(display: BasePart, style: { [string]: any }): Highlight
-	local highlight: any = Instance.new("Highlight")
-	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
-	for property, value in style do
-		highlight[property] = value
+-- A Highlight in a part only outlines that part, so every part of the item that can be seen gets
+-- its own. An item with parts inside has an invisible outer part, which gets none
+function Rolling.AddHighlight(display: BasePart, style: { [string]: any }): { Highlight }
+	local highlights = {}
+	for _, part in ItemModel.GetParts(display) do
+		if part.Transparency >= 1 then
+			continue
+		end
+		local highlight: any = Instance.new("Highlight")
+		highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+		for property, value in style do
+			highlight[property] = value
+		end
+		highlight.Parent = part
+		table.insert(highlights, highlight)
 	end
-	highlight.Parent = display
-	return highlight
+	return highlights
+end
+
+-- The highlights AddHighlight gave the item
+function Rolling.GetHighlights(display: BasePart): { Highlight }
+	local highlights = {}
+	for _, descendant in display:GetDescendants() do
+		if descendant:IsA("Highlight") then
+			table.insert(highlights, descendant)
+		end
+	end
+	return highlights
 end
 
 local function formatOneIn(oneIn: number): string

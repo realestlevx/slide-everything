@@ -36,7 +36,7 @@ function CollisionService.Start()
 	PhysicsService:RegisterCollisionGroup(ITEMS_GROUP)
 	PhysicsService:CollisionGroupSetCollidable(PLAYERS_GROUP, ITEMS_GROUP, false)
 
-	-- Every clone of an item (and its hitbox) inherits the group
+	-- Every clone of an item inherits the group
 	for _, descendant in ReplicatedStorage.Items:GetDescendants() do
 		setGroup(descendant, ITEMS_GROUP)
 	end

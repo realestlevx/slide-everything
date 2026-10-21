@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
@@ -167,7 +168,7 @@ local function updateHeldItem(player: Player)
 	local turn = root.CFrame.Rotation:ToObjectSpace(held.CFrame.Rotation)
 	held.Name = HELD_NAME
 	local longestSide = math.max(held.Size.X, held.Size.Y, held.Size.Z)
-	held.Size *= math.min(1, HELD_SIZE / longestSide)
+	ItemModel.SetScale(held, math.min(1, HELD_SIZE / longestSide))
 	held.Massless = true
 	held.Anchored = false
 

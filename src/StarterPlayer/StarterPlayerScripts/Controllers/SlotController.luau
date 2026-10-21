@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 
 local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
@@ -121,7 +122,7 @@ local function showStats(billboard: BillboardGui, item: Items.Item, level: numbe
 		levelLabel.Text = `Level {level}`
 	end
 	if priceLabel then
-		priceLabel.Text = FormatMoney(Upgrades.GetCost(item, level))
+		priceLabel.Text = if level >= Upgrades.MAX_LEVEL then "MAX" else FormatMoney(Upgrades.GetCost(item, level))
 	end
 end
 
@@ -346,12 +347,8 @@ end
 
 -- The item springs up into its slot from a little smaller, with a burst and a flash
 local function land(slot: Model, display: BasePart)
-	local id = slot:GetAttribute("ItemId")
-	local item = if typeof(id) == "string" then Items[id] else nil
-	local template = item and ReplicatedStorage.Items:FindFirstChild(item.MeshName)
-	local size = if template and template:IsA("BasePart") then template.Size else display.Size
-	display.Size = size * LAND_SCALE
-	TweenService:Create(display, LAND_INFO, { Size = size }):Play()
+	ItemModel.SetScale(display, LAND_SCALE)
+	ItemModel.TweenScale(display, LAND_INFO, 1)
 	burstParticles(slot, FINISH_NAME)
 	flashRarity(slot)
 end
@@ -373,7 +370,7 @@ local function finishPlacing(slot: Model)
 	placing[slot] = nil
 	entry.Copy:Destroy()
 	if not fadedPlaces[slotPlaces[slot]] then
-		display.LocalTransparencyModifier = 0
+		ItemModel.SetLocalTransparency(display, 0)
 	end
 	land(slot, display)
 	playSound("Place")
@@ -385,9 +382,9 @@ local function givePlacingUp(slot: Model, entry: Placing)
 		return
 	end
 	placing[slot] = nil
-	TweenService:Create(entry.Copy, GIVE_UP_INFO, { LocalTransparencyModifier = 1 }):Play()
+	ItemModel.TweenLocalTransparency(entry.Copy, GIVE_UP_INFO, 1)
 	task.delay(GIVE_UP_INFO.Time, entry.Copy.Destroy, entry.Copy)
-	entry.Held.LocalTransparencyModifier = 0
+	ItemModel.SetLocalTransparency(entry.Held, 0)
 	for _, descendant in entry.Held:GetDescendants() do
 		if descendant:IsA("BillboardGui") then
 			descendant.Enabled = true
@@ -400,16 +397,16 @@ end
 local function flyIn(slot: Model, slotPart: BasePart, item: Items.Item, held: BasePart)
 	local copy = Rolling.CreateDisplay(item, slotPart)
 	local entry: Placing = { Copy = copy, Rest = copy.CFrame, Held = held, Landed = false }
-	local fullSize = copy.Size
 	local from = held.CFrame
-	local fromSize = held.Size
-	copy.CFrame = from
-	copy.Size = fromSize
+	-- The held one is a copy shrunk evenly to fit the hand
+	local fromScale = held.Size.X / copy.Size.X
+	ItemModel.SetScale(copy, fromScale)
+	ItemModel.PivotTo(copy, from)
 	copy.Parent = workspace
 	placing[slot] = entry
 
 	-- The real one is still in the hand until the server takes it, so it's hidden here meanwhile
-	held.LocalTransparencyModifier = 1
+	ItemModel.SetLocalTransparency(held, 1)
 	for _, descendant in held:GetDescendants() do
 		if descendant:IsA("BillboardGui") then
 			descendant.Enabled = false
@@ -425,7 +422,7 @@ local function flyIn(slot: Model, slotPart: BasePart, item: Items.Item, held: Ba
 		local top = (from.Position + target.Position) / 2 + Vector3.yAxis * FLY_ARC
 		local position = from.Position:Lerp(top, eased):Lerp(top:Lerp(target.Position, eased), eased)
 		copy.CFrame = from.Rotation:Lerp(target.Rotation, eased) + position
-		copy.Size = fromSize:Lerp(fullSize, eased)
+		ItemModel.SetScale(copy, fromScale + (1 - fromScale) * eased)
 		if alpha >= 1 then
 			connection:Disconnect()
 			entry.Landed = true
@@ -460,11 +457,11 @@ local function onDescendantAdded(place: Folder, descendant: Instance)
 		FloatController.Float(descendant)
 		local slot = descendant.Parent
 		if fadedPlaces[place] then
-			descendant.LocalTransparencyModifier = 1
+			ItemModel.SetLocalTransparency(descendant, 1)
 		end
 		if slot and slot:IsA("Model") and placing[slot] then
 			-- Hidden until the flown copy lands on it
-			descendant.LocalTransparencyModifier = 1
+			ItemModel.SetLocalTransparency(descendant, 1)
 			finishPlacing(slot)
 		elseif slot and slot:IsA("Model") and os.clock() - (filledAt[slot] or -math.huge) < FRESH_TIME then
 			land(slot, descendant)
@@ -499,8 +496,14 @@ function SlotController.SetFaded(place: Folder, faded: boolean)
 			if not (descendant:IsA("BasePart") or descendant:IsA("Decal")) then
 				continue
 			end
-			if faded and descendant.Name == SLOT_ITEM_NAME then
-				descendant.LocalTransparencyModifier = 1
+			if descendant.Name == SLOT_ITEM_NAME and descendant:IsA("BasePart") then
+				if faded then
+					ItemModel.SetLocalTransparency(descendant, 1)
+				else
+					ItemModel.TweenLocalTransparency(descendant, SLOT_FADE_INFO, 0)
+				end
+			elseif descendant:FindFirstAncestor(SLOT_ITEM_NAME) then
+				continue -- Part of the item, which goes along with it
 			else
 				TweenService:Create(descendant, SLOT_FADE_INFO, { LocalTransparencyModifier = if faded then 1 else 0 }):Play()
 			end

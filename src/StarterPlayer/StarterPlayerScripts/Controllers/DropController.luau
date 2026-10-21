@@ -48,19 +48,16 @@ local FALL_LIMIT = 150 -- Studs below where it was dropped from; an item lower t
 local END_PAUSE = 0.75 -- Seconds the camera stays on where the items ended up
 local ITEM_FADE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- The camera chases the items from behind, wherever they're heading, raised by FOLLOW_PITCH.
--- FOLLOW_YAW swings it round to one side of straight behind
-local FOLLOW_DISTANCE = 24 -- Studs
-local FOLLOW_PITCH = math.rad(35)
-local FOLLOW_YAW = math.rad(0)
-local HEADING_SHARPNESS = 2 -- How quickly the camera swings round when the items turn
--- Studs per second across the ground. Slower than this, like falling straight down the funnel, the
--- camera keeps the heading it had
-local MIN_HEADING_SPEED = 5
+-- The camera chases the items from straight behind, looking down the slide, raised by FOLLOW_PITCH.
+-- It follows them down the slide and up and down, but stays over the slide's middle and only turns a
+-- little toward them, so steering moves the items across the screen instead of swinging the view.
+-- High and far enough back to keep items steered out to the sides in sight
+local FOLLOW_DISTANCE = 36 -- Studs
+local FOLLOW_PITCH = math.rad(50)
+-- Share of the way across to the items that the camera looks, from the slide's middle. 0 looks
+-- straight down the slide; 1 looks right at them
+local SIDE_LOOK = 0.2
 local WALL_GAP = 1 -- Studs the camera keeps in front of a wall between it and the items
--- Studs the pack can be steered to either side before the camera follows, so steering visibly moves
--- the items across the screen
-local CAMERA_SIDE_SLACK = 8
 -- How quickly the camera catches up with where it should be; higher is snappier. The view turns
 -- faster than the camera moves, so the items stay in frame while it glides after them
 local MOVE_SHARPNESS = 4
@@ -72,7 +69,9 @@ local STREAM_INTERVAL = 0.5 -- Seconds between asks for the slide around the ite
 
 type DroppedItem = {
 	Item: Items.Item,
+	Level: number,
 	SlotKey: string, -- The slot it was dropped from, which the server pays it out by
+	Pay: number, -- What it's earned so far, shown while it drops. Fixed once it's done
 	Part: BasePart, -- The item's mesh, which the rest of it is welded to
 	Parts: { BasePart },
 	Rotation: CFrame, -- The way up it was dropped, which it keeps
@@ -96,9 +95,8 @@ type Drop = {
 	EndWall: BasePart?, -- The last multiplier wall, at the end of the slide
 	Length: number, -- Studs from Start to EndWall, along Direction
 	SteerZone: BasePart?, -- Without one, items can be steered from the start
-	CameraSide: number, -- Studs to the side of Start that the camera centres on, along Direction's right
 	Ending: boolean,
-	Heading: Vector3, -- Where the items are going across the ground, which the camera stays behind
+	Distance: number, -- Studs down the slide that the furthest item has got, shown while it drops
 	-- Finds the walls between the camera and the items and the ground under the items, but not the items
 	WorldRay: RaycastParams,
 }
@@ -136,12 +134,28 @@ local function getProgress(current: Drop, position: Vector3): number
 	return math.clamp((position - current.Start):Dot(current.Direction) / current.Length, 0, 1)
 end
 
+-- What the drop has made so far and how far it's got, on screen. Each item still on the slide counts
+-- what it would earn if it stopped where it is. The server works out the real pay the same way
+local function showStats(current: Drop)
+	local cash = 0
+	for _, dropped in current.Items do
+		if not dropped.Done then
+			local position = dropped.Part.Position
+			dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, getProgress(current, position), dropped.Multiplier)
+			current.Distance = math.max(current.Distance, (position - current.Start):Dot(current.Direction))
+		end
+		cash += dropped.Pay
+	end
+	HudController.SetDropStats(cash, current.Distance)
+end
+
 -- The item's run is over: it leaves the slide for the pile on the collect pad, and the server hears
 -- how far it got and which wall it passed last, which it pays out
 local function finishItem(current: Drop, dropped: DroppedItem, progress: number)
 	if dropped.Done then
 		return
 	end
+	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, progress, dropped.Multiplier)
 	dropped.Done = true
 	DropResult:FireServer(dropped.SlotKey, progress, dropped.Multiplier)
 	CollectController.AddToPile(current.Place, dropped.Item)
@@ -167,7 +181,7 @@ end
 
 -- A physical copy of the item where its display floats in the slot. Made on this client only, so
 -- the server doesn't simulate anyone's drop
-local function spawnCopy(current: Drop, item: Items.Item, slotKey: string, cframe: CFrame)
+local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey: string, cframe: CFrame)
 	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS)
 	local attachment = Instance.new("Attachment")
 	attachment.Parent = copy
@@ -181,7 +195,9 @@ local function spawnCopy(current: Drop, item: Items.Item, slotKey: string, cfram
 
 	local dropped: DroppedItem = {
 		Item = item,
+		Level = level,
 		SlotKey = slotKey,
+		Pay = 0,
 		Part = copy,
 		Parts = parts,
 		Rotation = cframe.Rotation,
@@ -219,6 +235,7 @@ local function endDrop()
 	for _, dropped in current.Items do
 		finishItem(current, dropped, getProgress(current, dropped.Part.Position))
 	end
+	showStats(current)
 	drop = nil
 
 	if current.Floor then
@@ -257,6 +274,7 @@ local function followItems(current: Drop, dt: number)
 			table.insert(active, dropped)
 		end
 	end
+	showStats(current)
 
 	if #active == 0 or os.clock() - current.StartedAt > Drops.MAX_TIME then
 		if not current.Ending then
@@ -277,9 +295,8 @@ local function followItems(current: Drop, dt: number)
 	center /= #active
 
 	local steer = HudController.GetSteer()
-	local right = current.Heading:Cross(Vector3.yAxis)
+	local right = current.Direction:Cross(Vector3.yAxis)
 	local grip = 1 - math.exp(-SIDE_GRIP * dt)
-	local velocity = Vector3.zero
 	for _, dropped in active do
 		local part = dropped.Part
 		local itemVelocity = part.AssemblyLinearVelocity
@@ -301,36 +318,24 @@ local function followItems(current: Drop, dt: number)
 		end
 		itemVelocity = forward + right * sideways + Vector3.yAxis * itemVelocity.Y
 		part.AssemblyLinearVelocity = itemVelocity
-		velocity += itemVelocity
 
 		local ground = workspace:Raycast(part.Position, -Vector3.yAxis * GROUND_PROBE, current.WorldRay)
 		dropped.Align.CFrame = if ground
 			then CFrame.fromRotationBetweenVectors(Vector3.yAxis, ground.Normal) * dropped.Rotation
 			else dropped.Rotation
 	end
-	velocity /= #active
 
-	local heading = flatten(velocity)
-	if heading.Magnitude > MIN_HEADING_SPEED then
-		local blended = current.Heading:Lerp(heading.Unit, 1 - math.exp(-HEADING_SHARPNESS * dt))
-		-- A sudden turn right round can blend through nothing; the old heading stands until it's past
-		if blended.Magnitude > 0.01 then
-			current.Heading = blended.Unit
-		end
-	end
+	-- The pack's middle, moved across onto the line down the middle of the slide from Start
+	local packSide = (center - current.Start):Dot(right)
+	local focus = center - right * packSide
 
-	local side = current.Direction:Cross(Vector3.yAxis)
-	local packSide = (center - current.Start):Dot(side)
-	current.CameraSide = math.clamp(current.CameraSide, packSide - CAMERA_SIDE_SLACK, packSide + CAMERA_SIDE_SLACK)
-	local focus = center + side * (current.CameraSide - packSide)
-
-	local behind = CFrame.fromAxisAngle(Vector3.yAxis, FOLLOW_YAW):VectorToWorldSpace(-current.Heading)
+	local behind = -current.Direction
 	local offset = (behind * math.cos(FOLLOW_PITCH) + Vector3.yAxis * math.sin(FOLLOW_PITCH)) * FOLLOW_DISTANCE
 	-- In front of any wall that would come between, like the funnel's
 	local hit = workspace:Raycast(focus, offset, current.WorldRay)
 	local distance = if hit then math.max(hit.Distance - WALL_GAP, WALL_GAP) else FOLLOW_DISTANCE
 	goalPosition = focus + offset.Unit * distance
-	goalLookAt = focus
+	goalLookAt = focus + right * packSide * SIDE_LOOK
 
 	-- With streaming, parts of the slide far from the character may not be loaded on this client yet
 	if os.clock() - lastStreamRequest > STREAM_INTERVAL then
@@ -419,7 +424,13 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		local item = if typeof(id) == "string" then Items[id] else nil
 		local display = slot:FindFirstChild(SLOT_ITEM_NAME)
 		if item and display and display:IsA("BasePart") then
-			table.insert(toDrop, { Item = item, SlotKey = Places.GetSlotKey(slot), CFrame = display.CFrame })
+			local level = slot:GetAttribute("ItemLevel")
+			table.insert(toDrop, {
+				Item = item,
+				Level = if typeof(level) == "number" then level else 1,
+				SlotKey = Places.GetSlotKey(slot),
+				CFrame = display.CFrame,
+			})
 			startY = math.min(startY, display.Position.Y)
 		end
 	end
@@ -452,17 +463,17 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		EndWall = endWall,
 		Length = length,
 		SteerZone = if zone and zone:IsA("BasePart") then zone else nil,
-		CameraSide = 0,
 		Ending = false,
-		Heading = direction,
+		Distance = 0,
 		WorldRay = worldRay,
 	}
 	drop = current
 	lastDropAt = current.StartedAt
 
 	for _, entry in toDrop do
-		spawnCopy(current, entry.Item, entry.SlotKey, entry.CFrame)
+		spawnCopy(current, entry.Item, entry.Level, entry.SlotKey, entry.CFrame)
 	end
+	showStats(current)
 	local ignored: { Instance } = {}
 	for _, dropped in current.Items do
 		table.insert(ignored, dropped.Part)

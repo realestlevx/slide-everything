@@ -5,9 +5,12 @@ local TweenService = game:GetService("TweenService")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
+
+local CurrencyController = require(script.Parent.CurrencyController)
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -32,16 +35,22 @@ local FIRST_GAP = 0.2 -- Seconds between the first item setting off and the seco
 local GAP_SHRINK = 0.85 -- Each gap is this share of the one before
 local MIN_GAP = 0.04 -- Seconds; the fastest the ticks get
 local MIN_SCALE = 0.02 -- Parts can't shrink to nothing
+-- Each tick plays a little higher than the one before, up to MAX_TICK_PITCH
+local TICK_PITCH_STEP = 0.02
+local MAX_TICK_PITCH = 1.6
+local MAX_TICK_SOUNDS = 8 -- Ticks heard at once; past this the oldest is cut short
 
 type StackItem = {
-	Part: BasePart, -- The item's mesh
-	Parts: { BasePart },
+	Part: BasePart, -- The item's outer part, with any others welded inside
 }
 
 -- Only the player's own stack is made, on this client. The server keeps what's in it, and says so
 -- with the place's CollectItems attribute
 local stack: { StackItem } = {}
 local stackPlace: Folder? = nil -- The place whose saved stack has been put back, which happens once
+local itemsFlying = 0 -- Collected items still on their way into the player
+local lastCash: { [Folder]: number } = {} -- Each place's CollectCash when it was last seen
+local tickSounds: { Sound } = {} -- Ticks still playing, oldest first
 
 local CollectController = {}
 
@@ -114,25 +123,52 @@ function CollectController.AddToPile(place: Folder, item: Items.Item)
 		return
 	end
 
-	local copy, parts = PhysicalItem.Create(item, landing)
-	for _, part in parts do
-		part.Anchored = true
-		part.LocalTransparencyModifier = 1
-		TweenService:Create(part, APPEAR_INFO, { LocalTransparencyModifier = 0 }):Play()
-	end
+	local copy = PhysicalItem.Create(item, landing)
+	-- Only the outer part is anchored; the parts inside are welded to it, so they move with it
+	copy.Anchored = true
+	ItemModel.SetLocalTransparency(copy, 1)
+	ItemModel.TweenLocalTransparency(copy, APPEAR_INFO, 0)
 	copy.Parent = workspace
-	table.insert(stack, { Part = copy, Parts = parts })
+	table.insert(stack, { Part = copy })
 end
 
--- Played from the client, so only this player hears them. Playing one again restarts it, so items
--- arriving one after another tick rather than pile up
-local function playSound(name: string) -- Sound in SoundService.SFX.Collection
+-- Played from the client, so only this player hears them
+local function findSound(name: string): Sound? -- Sound in SoundService.SFX.Collection
 	local sfx = SoundService:FindFirstChild("SFX")
 	local collection = sfx and sfx:FindFirstChild("Collection")
 	local sound = collection and collection:FindFirstChild(name)
-	if sound and sound:IsA("Sound") then
+	return if sound and sound:IsA("Sound") then sound else nil
+end
+
+local function playSound(name: string)
+	local sound = findSound(name)
+	if sound then
 		sound:Play()
 	end
+end
+
+-- Every tick is its own copy, so ticks close together all play out instead of restarting one sound,
+-- which cuts it off before it's heard
+local function playTick(pitch: number)
+	local sound = findSound("Tick")
+	if not sound then
+		return
+	end
+	if #tickSounds >= MAX_TICK_SOUNDS then
+		table.remove(tickSounds, 1):Destroy()
+	end
+	local copy = sound:Clone()
+	copy.PlaybackSpeed = sound.PlaybackSpeed * pitch
+	copy.Parent = sound.Parent
+	table.insert(tickSounds, copy)
+	copy.Ended:Connect(function()
+		local index = table.find(tickSounds, copy)
+		if index then
+			table.remove(tickSounds, index)
+		end
+		copy:Destroy()
+	end)
+	copy:Play()
 end
 
 local function getRoot(): BasePart?
@@ -142,14 +178,10 @@ local function getRoot(): BasePart?
 end
 
 -- Up off the stack, then into the player while shrinking. It follows the player if they move
-local function flyToPlayer(stackItem: StackItem, startDelay: number)
+local function flyToPlayer(stackItem: StackItem, startDelay: number, pitch: number)
 	local part = stackItem.Part
-	-- Only the mesh flies; the hitbox has nothing left to do
-	for _, other in stackItem.Parts do
-		if other ~= part then
-			other:Destroy()
-		end
-	end
+	-- Off the stack now, so nothing lands on or touches it
+	ItemModel.SetVisualOnly(part)
 
 	task.wait(startDelay)
 	local rise = TweenService:Create(part, RISE_INFO, { CFrame = part.CFrame + Vector3.yAxis * RISE_HEIGHT })
@@ -157,29 +189,34 @@ local function flyToPlayer(stackItem: StackItem, startDelay: number)
 	rise.Completed:Wait()
 
 	local from = part.CFrame
-	local size = part.Size
 	local progress = Instance.new("NumberValue")
 	progress.Changed:Connect(function(alpha: number)
 		local root = getRoot()
 		local target = if root then root.Position else from.Position
 		part.CFrame = from.Rotation + from.Position:Lerp(target, alpha)
-		part.Size = size * math.max(1 - alpha, MIN_SCALE)
+		ItemModel.SetScale(part, math.max(1 - alpha, MIN_SCALE))
 	end)
 	local fly = TweenService:Create(progress, FLY_INFO, { Value = 1 })
 	fly:Play()
 	fly.Completed:Wait()
 	part:Destroy()
 	progress:Destroy()
-	playSound("Tick")
+	playTick(pitch)
+
+	-- Each item brings its share of the collected cash in as a bill, and the last brings the rest
+	CurrencyController.PopCash(1 / itemsFlying)
+	itemsFlying -= 1
 end
 
 local function collectStack()
 	playSound("Collect")
-	local startDelay, gap = 0, FIRST_GAP
+	itemsFlying += #stack
+	local startDelay, gap, pitch = 0, FIRST_GAP, 1
 	for index = #stack, 1, -1 do
-		task.spawn(flyToPlayer, stack[index], startDelay)
+		task.spawn(flyToPlayer, stack[index], startDelay, pitch)
 		startDelay += gap
 		gap = math.max(gap * GAP_SHRINK, MIN_GAP)
+		pitch = math.min(pitch + TICK_PITCH_STEP, MAX_TICK_PITCH)
 	end
 	table.clear(stack)
 end
@@ -228,11 +265,31 @@ local function showCash(place: Folder)
 	end
 end
 
+-- Cash going down on the player's own pad has been collected. It's kept off their cash counter
+-- and pops out onto it a bill at a time, as its items fly into them
+local function onCashChanged(place: Folder)
+	local cash = place:GetAttribute("CollectCash")
+	local last = lastCash[place]
+	lastCash[place] = if typeof(cash) == "number" then cash else nil
+	if not (isOwn(place) and typeof(cash) == "number" and last and cash < last) then
+		return
+	end
+	CurrencyController.HoldCash(last - cash)
+	-- Items still in the stack are about to fly, once the emptied CollectItems arrives. With none
+	-- at all, it pops out in one go
+	if itemsFlying == 0 and #stack == 0 then
+		CurrencyController.PopCash(1)
+	end
+end
+
 function CollectController.Start()
 	for _, place in Places.GetAll() do
 		showCash(place)
+		local cash = place:GetAttribute("CollectCash")
+		lastCash[place] = if typeof(cash) == "number" then cash else nil
 		place:GetAttributeChangedSignal("CollectCash"):Connect(function()
 			showCash(place)
+			onCashChanged(place)
 		end)
 		-- The pad is streamed, so its billboard can arrive after the cash
 		place.DescendantAdded:Connect(function(descendant)
@@ -246,6 +303,9 @@ function CollectController.Start()
 			onStackChanged(place)
 		end)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+			-- A new owner's cash on the pad isn't a collect, even if it's less than the last one's
+			local ownCash = place:GetAttribute("CollectCash")
+			lastCash[place] = if typeof(ownCash) == "number" then ownCash else nil
 			if stackPlace == place and not isOwn(place) then
 				stackPlace = nil
 				clearStack()

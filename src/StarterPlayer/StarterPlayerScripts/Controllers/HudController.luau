@@ -1,8 +1,11 @@
 local ContextActionService = game:GetService("ContextActionService")
 local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+
+local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 
 local ButtonController = require(script.Parent.ButtonController)
 
@@ -49,6 +52,9 @@ type Piece = {
 }
 
 local pieces: { [string]: Piece } = {}
+-- ControlGui's labels for what the drop has made and how far it's got
+local cashLabel: TextLabel? = nil
+local distanceLabel: TextLabel? = nil
 local dropView = false
 local switches = 0 -- Bumped on every switch, so steps left over from the one before stop
 
@@ -249,6 +255,16 @@ function HudController.GetSteer(): number
 	return (if isHeld(1) then 1 else 0) - (if isHeld(-1) then 1 else 0)
 end
 
+-- What the drop has made so far, and how many studs down the slide it's got, shown as metres
+function HudController.SetDropStats(cash: number, distance: number)
+	if cashLabel then
+		cashLabel.Text = FormatMoney(cash, 2)
+	end
+	if distanceLabel then
+		distanceLabel.Text = `{math.max(math.floor(distance), 0)}m`
+	end
+end
+
 -- Puts the piece where it belongs in the view the player is in now, without moving it there. Guis
 -- are made again on every respawn, so each new copy gets this too
 local function addPiece(name: string, gui: GuiObject, side: Side?)
@@ -286,6 +302,8 @@ end
 
 local function bindControls(gui: Instance)
 	local frame = gui:WaitForChild("Main") :: GuiObject
+	cashLabel = frame:WaitForChild("Cash") :: TextLabel
+	distanceLabel = frame:WaitForChild("Distance") :: TextLabel
 	for side, name in STEER_BUTTONS do
 		local button = frame:WaitForChild(name) :: GuiButton
 		-- Before its piece: this moves the button into a holder in its place, and the button slides

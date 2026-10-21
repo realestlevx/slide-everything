@@ -9,7 +9,7 @@ local Drops = {
 	SECONDS = 10,
 	COOLDOWN = 10, -- Seconds from the start of one drop to the next
 	MAX_TIME = 30, -- Seconds. A drop is over by then, whatever its items are doing
-	MAX_PILE = 40, -- Finished items shown piled on the collect pad. Older ones still count, just unseen
+	MAX_PILE = 50, -- Finished items shown piled on the collect pad. Older ones still count, just unseen
 }
 
 -- What an item earns for its run. Progress is the share of the slide it covered, 0 to 1

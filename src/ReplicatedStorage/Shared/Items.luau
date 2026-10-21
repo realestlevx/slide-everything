@@ -16,7 +16,9 @@ export type Item = {
 	Price: number, -- What the item costs to buy
 	MoneyPerSecond: number, -- Earned every second while the item sits in a slot
 	BaseMoneyPerStud: number,
-	MeshName: string, -- MeshPart in ReplicatedStorage.Items (with its Hitbox)
+	-- Part in ReplicatedStorage.Items, which collides as a box: a MeshPart, or an invisible box with
+	-- the item's meshes and effects inside it (see ItemModel)
+	MeshName: string,
 }
 
 -- One item in a player's inventory. Every copy gets its own Uid, so two of the same item stay apart
@@ -27,7 +29,7 @@ export type OwnedItem = {
 }
 
 -- Each rarity earns about 5x the one below it, but takes longer to earn back its price: 10s for a
--- Toy Car, up to about 4.5 min for a D20. Slots are the limit, so rarer is always worth having, and
+-- Toy Car, up to about 4.5 min for a D20 and 6.5 min for a Lightsaber. Slots are the limit, so rarer is always worth having, and
 -- the rarest can't be bought the moment they first roll. A second item in a rarity is its better
 -- version: 1.5x the earnings for twice the price, and 2-2.5x rarer.
 -- The chances add up to about 100%, so the odds the stands show match the ones written here
@@ -108,6 +110,17 @@ local Items: { [string]: Item } = {
 		MoneyPerSecond = 75000,
 		BaseMoneyPerStud = 45,
 		MeshName = "D20",
+	},
+	Lightsaber = {
+		Id = "Lightsaber",
+		Name = "Lightsaber",
+		Icon = 0, -- TODO: the Lightsaber's icon image id
+		Rarity = "Mythic",
+		OneIn = 5000,
+		Price = 100000000,
+		MoneyPerSecond = 250000,
+		BaseMoneyPerStud = 100,
+		MeshName = "Lightsaber",
 	},
 }
 

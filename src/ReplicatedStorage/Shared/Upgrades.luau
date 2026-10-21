@@ -9,6 +9,7 @@ local Upgrades = {
 	INCOME_MULTIPLIER = 1.2,
 	FIRST_COST = 0.5, -- Share of the item's price
 	COST_GROWTH = 1.4,
+	MAX_LEVEL = 100, -- An item at this level can't be upgraded any further
 }
 
 -- Items saved before upgrades existed have no level

@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
+local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
@@ -251,12 +252,11 @@ local function showPreview(place: Folder, item: Items.Item)
 	preview.Name = "RollPreview"
 	Rolling.AddHighlight(preview, Rolling.ROLLING_HIGHLIGHT)
 
-	local fullSize = preview.Size
-	preview.Size = fullSize * 0.01
+	ItemModel.SetScale(preview, 0.01)
 	preview.Parent = stand
 	previews[place] = preview
 	FloatController.Float(preview)
-	TweenService:Create(preview, POP, { Size = fullSize }):Play()
+	ItemModel.TweenScale(preview, POP, 1)
 end
 
 -- The owner's reveal runs on their own timing, the moment their last item lands. Their preview stays
@@ -272,9 +272,10 @@ local function reveal(place: Folder, item: Items.Item)
 
 	local tweens = {}
 	local preview = previews[place]
-	local highlight = preview and preview:FindFirstChildOfClass("Highlight")
-	if highlight then
-		table.insert(tweens, TweenService:Create(highlight, OUTCOME_FADE, Rolling.GetOutcomeHighlight(item)))
+	if preview then
+		for _, highlight in Rolling.GetHighlights(preview) do
+			table.insert(tweens, TweenService:Create(highlight, OUTCOME_FADE, Rolling.GetOutcomeHighlight(item)))
+		end
 	end
 
 	local rarityColor = Rarities[item.Rarity].Color
@@ -298,7 +299,7 @@ end
 local function highlightServerCopy(place: Folder)
 	local display = find(place, "RollStand_1", "RolledItem")
 	local item = rolledItems[place]
-	if display and item and not previews[place] and not display:FindFirstChildOfClass("Highlight") then
+	if display and item and not previews[place] and #Rolling.GetHighlights(display) == 0 then
 		Rolling.AddHighlight(display, Rolling.GetOutcomeHighlight(item))
 	end
 end
