@@ -60,6 +60,23 @@ local function getSpeedLevels(): { Level }
 	return levels
 end
 
+-- 7.5s, 9s and so on up to 15s: how long a drop's items slide before they fade out, so how far they
+-- get. Not on the economy sheet yet, so the prices are a placeholder: 500 for 9s, then 4x more each level
+local TIME_START = 7.5 -- Seconds
+local TIME_STEP = 1.5
+local TIME_STEPS = 5
+local TIME_PRICE = 500 -- What 9s costs
+local TIME_PRICE_GROWTH = 4
+
+local function getTimeLevels(): { Level }
+	local prices = getPrices({ TIME_PRICE }, TIME_PRICE_GROWTH, TIME_STEPS)
+	local levels: { Level } = { { Value = TIME_START } }
+	for step = 1, TIME_STEPS do
+		table.insert(levels, { Value = TIME_START + step * TIME_STEP, Price = prices[step] })
+	end
+	return levels
+end
+
 -- 1 stand, then one more each level up to 6, at the economy sheet's roll slot prices
 local ROLL_SLOT_PRICES = { 800, 10000, 250000, 2000000, 51000000 } -- What stands 2 to 6 cost
 
@@ -92,6 +109,12 @@ local SignUpgrades = {
 			Frame = "Speed_Frame",
 			Suffix = "x",
 			Levels = getSpeedLevels(),
+		},
+		-- Seconds a drop lasts; see DropController
+		SlideTime = {
+			Frame = "Time_Frame",
+			Suffix = "s",
+			Levels = getTimeLevels(),
 		},
 	} :: { [string]: Upgrade },
 }

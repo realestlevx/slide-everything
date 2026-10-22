@@ -15,9 +15,12 @@ local DropResult = ReplicatedStorage.Remotes.DropResult
 
 local DROP_BUTTON_NAME = "Drop_Button" -- Model in a place holding the prompt that drops its items
 local COLLECT_NAME = "Collect" -- Model in a place with the collect pad and its prompt
-local MULTIPLIER_ATTRIBUTE = "Multiplier" -- On the walls across the slide
+local DROP_FLOOR_NAME = "DropPart" -- Under a place's slots; the way down its slide is measured from it
 local COOLDOWN_SLACK = 0.5 -- Seconds. The client checks the cooldown on its own clock, a little ahead
-local RESULT_SLACK = 5 -- Seconds past Drops.MAX_TIME that results may still arrive in, with lag
+local RESULT_SLACK = 5 -- Seconds past the drop's time that results may still arrive in, with lag
+-- Items go no faster down the slide than the slide speed, plus a little to catch up with the pack.
+-- A result can claim up to this many times as far as that speed goes in the drop's time
+local SPEED_SLACK = 2
 
 type DroppedItem = {
 	Item: Items.Item,
@@ -27,12 +30,15 @@ type DroppedItem = {
 
 type Drop = {
 	StartedAt: number,
-	Speed: number, -- The owner's Sliding Speed when it started, so buying more mid-drop doesn't count
+	-- The owner's Sliding Speed and Sliding Time when it started, so buying more mid-drop doesn't count
+	Speed: number,
+	Time: number,
+	Walls: { Drops.Wall }, -- Down the place's slide, nearest first
 	Items: { [string]: DroppedItem }, -- Slot key -> what was in it
 }
 
 local drops: { [Player]: Drop } = {} -- Each player's latest drop
-local highestMultiplier = 1 -- The most any wall multiplies by; no result can claim more
+local walls: { [BasePart]: boolean } = {} -- Every multiplier wall
 
 local DropService = {}
 
@@ -70,23 +76,38 @@ local function onDrop(place: Folder, player: Player)
 	if next(dropped) == nil then
 		return
 	end
-	drops[player] = { StartedAt = os.clock(), Speed = SignUpgradeService.GetValue(player, "SlideSpeed"), Items = dropped }
+
+	local slideWalls: { Drops.Wall } = {}
+	local floor = place:FindFirstChild(DROP_FLOOR_NAME)
+	if floor and floor:IsA("BasePart") then
+		local start, direction = Drops.GetSlideLine(floor)
+		for wall in walls do
+			Drops.AddWall(slideWalls, wall, start, direction)
+		end
+	end
+	drops[player] = {
+		StartedAt = os.clock(),
+		Speed = SignUpgradeService.GetValue(player, "SlideSpeed"),
+		Time = SignUpgradeService.GetValue(player, "SlideTime"),
+		Walls = slideWalls,
+		Items = dropped,
+	}
 end
 
--- One item's finished run: the share of the slide it covered and the multiplier of the last wall it
--- passed. Both come from the client, so they're held to what the slide allows. The money waits on
--- the collect pad, and the item joins the pile there
-local function onResult(player: Player, slotKey: any, progress: any, multiplier: any)
+-- One item's finished run: how many studs down the slide it got, which comes from the client, so
+-- it's held to what the slide speed allows. The walls it passed are worked out from that here. The
+-- money waits on the collect pad, and the item joins the pile there
+local function onResult(player: Player, slotKey: any, distance: any)
 	local drop = drops[player]
 	local data = PlayerDataService.Get(player)
 	if not (drop and data and typeof(slotKey) == "string") then
 		return
 	end
 	-- NaN fails every comparison, so it's turned away with anything else out of range
-	if not (typeof(progress) == "number" and progress >= 0 and typeof(multiplier) == "number" and multiplier >= 1) then
+	if not (typeof(distance) == "number" and distance >= 0) then
 		return
 	end
-	if os.clock() - drop.StartedAt > Drops.MAX_TIME + RESULT_SLACK then
+	if os.clock() - drop.StartedAt > drop.Time + RESULT_SLACK then
 		return
 	end
 	local dropped = drop.Items[slotKey]
@@ -95,13 +116,9 @@ local function onResult(player: Player, slotKey: any, progress: any, multiplier:
 	end
 	dropped.Paid = true
 
-	local pay = Drops.GetPay(
-		dropped.Item,
-		dropped.Level,
-		math.min(progress, 1),
-		math.min(multiplier, highestMultiplier),
-		drop.Speed
-	)
+	local reached = math.min(distance, Drops.GetSlideSpeed(drop.Speed) * SPEED_SLACK * drop.Time)
+	local paidDistance = Drops.Measure(drop.Walls, reached)
+	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.Speed)
 	data.CollectCash += pay
 	table.insert(data.CollectItems, dropped.Item.Id)
 	while #data.CollectItems > Drops.MAX_PILE do
@@ -134,13 +151,20 @@ local function findPrompt(place: Folder, name: string): ProximityPrompt?
 	return holder and holder:FindFirstChildWhichIsA("ProximityPrompt", true)
 end
 
+local function watchWall(instance: Instance)
+	if Drops.IsWall(instance) then
+		walls[instance :: BasePart] = true
+	end
+end
+
 function DropService.Start()
 	for _, descendant in workspace:GetDescendants() do
-		local multiplier = descendant:GetAttribute(MULTIPLIER_ATTRIBUTE)
-		if descendant:IsA("BasePart") and typeof(multiplier) == "number" then
-			highestMultiplier = math.max(highestMultiplier, multiplier)
-		end
+		watchWall(descendant)
 	end
+	workspace.DescendantAdded:Connect(watchWall)
+	workspace.DescendantRemoving:Connect(function(descendant)
+		walls[descendant :: any] = nil
+	end)
 
 	for _, place in Places.GetAll() do
 		local dropPrompt = findPrompt(place, DROP_BUTTON_NAME)

@@ -2,6 +2,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -18,15 +19,55 @@ local FADE_INFO = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local EDGE_MARGIN = 0.1 -- Pieces slide this share of their own size past the edge, so their strokes go too
 
 -- The pieces of the screen that swap while the player's items drop. These are on screen in the drop
--- view; the rest are on screen the rest of the time
-local DROP_VIEW_PIECES = { Spectate = true, ControlFrame = true, Left = true, Right = true }
+-- view, the multiplier only once it's past 1x; the rest are on screen the rest of the time
+local DROP_VIEW_PIECES =
+	{ Spectate = true, ControlFrame = true, Left = true, Right = true, Time = true, Multiplier = true }
 -- The sequences play side by side, each step once the one before has finished: in this order into
 -- the drop view, and backwards out of it. A step's pieces move together
 local SEQUENCES = {
 	{ { "BaseButtons" }, { "Spectate" } },
-	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right" } },
+	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right", "Time", "Multiplier" } },
 	{ { "Cash", "Gem" } },
 }
+
+-- The clock on the timer rocks from side to side
+local ICON_TILT = 5 -- Degrees either way
+local ICON_SWING_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true) -- Each way
+-- Every time the timer ticks down, a "-1" pops out of it and floats up as it fades
+local TICK_POP_TEXT = "-1"
+local TICK_POP_COLOR = Color3.fromRGB(255, 85, 85)
+local TICK_POP_SIZE = 0.6 -- Times the timer's size
+local TICK_POP_RISE = 1 -- Timer heights it floats up
+local TICK_POP_DRIFT = 0.25 -- Timer widths it may drift to either side as it goes
+local TICK_POP_GROW_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local TICK_POP_RISE_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TICK_POP_FADE_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades mostly at the end
+
+-- The multiplier's colors scroll through the rainbow. The gradient's colors are made again every
+-- frame, each a little further round, instead of sliding its Offset, which leaves a flat color
+-- where it's slid off the end
+local RAINBOW_COLORS = 12 -- Keypoints across it; a ColorSequence takes up to 20
+local RAINBOW_PERIOD = 2 -- Seconds for a color to scroll all the way across
+-- It shakes harder and grows bigger for every wall the items have passed that multiplies, up to
+-- MAX_SHAKE_WALLS of them. The shake starts as a slight tremble at the first wall and builds up
+-- faster with each one after: walls ^ SHAKE_BUILD times as hard
+local SHAKE_RATE = 20 -- Times a second it jumps to a new spot
+local SHAKE_STEP = 0.004 -- Share of its size it jumps about by, at the first wall
+local SHAKE_TILT_STEP = 0.4 -- Degrees it tips either way, at the first wall
+local SHAKE_BUILD = 1.5
+local GROW_STEP = 0.1 -- Share bigger it gets, for each wall
+local MAX_SHAKE_WALLS = 6
+local GROW_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out) -- Pops a little past its new size
+-- Every wall that multiplies also sends copies of MultiplierUp's Template up the screen from near the
+-- bottom, each a color of the rainbow, turning a little and fading as they rise
+local MULTIPLIER_UP_COUNT = 10
+local MULTIPLIER_UP_SPREAD = 0.3 -- Seconds they set off across, so they don't all go at once
+local MULTIPLIER_UP_MIN_START = 0.75 -- Share of the way down the screen they start, at the highest
+local MULTIPLIER_UP_MIN_RISE = 0.3 -- Share of the screen they rise
+local MULTIPLIER_UP_MAX_RISE = 0.55
+local MULTIPLIER_UP_MIN_TIME = 1 -- Seconds they take
+local MULTIPLIER_UP_MAX_TIME = 1.6
+local MULTIPLIER_UP_TILT = 20 -- Degrees they may start turned, and turn further, either way
 
 local STEER_ACTION = "SteerItems"
 local STEER_KEYS: { [Enum.KeyCode]: number } = { -- Key -> the side it steers to, -1 left and 1 right
@@ -55,6 +96,17 @@ local pieces: { [string]: Piece } = {}
 -- ControlGui's labels for what the drop has made and how far it's got
 local cashLabel: TextLabel? = nil
 local distanceLabel: TextLabel? = nil
+local timeLabel: TextLabel? = nil
+-- The drop's best multiplier so far, and how many walls that multiply it took to get there
+local multiplier = 1
+local multiplierWalls = 0
+local valueLabel: TextLabel? = nil -- Shows the multiplier
+local valueRest = UDim2.new() -- Where it sits when it isn't shaking
+local valueScale: UIScale? = nil
+local valueGradient: UIGradient? = nil
+local multiplierUpTemplate: ImageLabel? = nil
+local nextShakeAt = 0
+local random = Random.new()
 local dropView = false
 local switches = 0 -- Bumped on every switch, so steps left over from the one before stop
 
@@ -71,6 +123,9 @@ local HudController = {
 }
 
 local function isShown(name: string): boolean
+	if name == "Multiplier" and multiplier <= 1 then
+		return false
+	end
 	return (DROP_VIEW_PIECES[name] == true) == dropView
 end
 
@@ -265,6 +320,161 @@ function HudController.SetDropStats(cash: number, distance: number)
 	end
 end
 
+-- Anchored at its middle instead, without moving, so it grows and tips about its middle
+local function anchorAtMiddle(gui: GuiObject)
+	local anchor, size = gui.AnchorPoint, gui.Size
+	gui.AnchorPoint = Vector2.new(0.5, 0.5)
+	gui.Position += UDim2.fromScale(size.X.Scale * (0.5 - anchor.X), size.Y.Scale * (0.5 - anchor.Y))
+end
+
+-- Placed by where the timer's text is on screen, since its aspect ratio keeps it narrower than its frame
+local function popTime(label: TextLabel)
+	local holder = label.Parent :: GuiObject
+	local size = label.AbsoluteSize
+	local center = label.AbsolutePosition + size / 2 - holder.AbsolutePosition
+
+	local pop = Instance.new("TextLabel")
+	pop.Name = "TimePop"
+	pop.BackgroundTransparency = 1
+	pop.Text = TICK_POP_TEXT
+	pop.FontFace = label.FontFace
+	pop.TextScaled = true
+	pop.TextColor3 = TICK_POP_COLOR
+	pop.ZIndex = label.ZIndex + 1
+	pop.AnchorPoint = Vector2.new(0.5, 0.5)
+	pop.Size = UDim2.fromOffset(size.X * TICK_POP_SIZE, size.Y * TICK_POP_SIZE)
+	pop.Position = UDim2.fromOffset(center.X, center.Y)
+	local stroke = label:FindFirstChildOfClass("UIStroke")
+	local popStroke = if stroke then stroke:Clone() else nil
+	if popStroke then
+		popStroke.Parent = pop
+	end
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0
+	scale.Parent = pop
+	pop.Parent = holder
+
+	local drift = random:NextNumber(-TICK_POP_DRIFT, TICK_POP_DRIFT) * size.X
+	TweenService:Create(scale, TICK_POP_GROW_INFO, { Scale = 1 }):Play()
+	TweenService:Create(pop, TICK_POP_RISE_INFO, {
+		Position = UDim2.fromOffset(center.X + drift, center.Y - size.Y * TICK_POP_RISE),
+	}):Play()
+	TweenService:Create(pop, TICK_POP_FADE_INFO, { TextTransparency = 1 }):Play()
+	if popStroke then
+		TweenService:Create(popStroke, TICK_POP_FADE_INFO, { Transparency = 1 }):Play()
+	end
+	task.delay(TICK_POP_FADE_INFO.Time, pop.Destroy, pop)
+end
+
+-- Seconds left in the drop, counting down as m:ss
+function HudController.SetDropTime(seconds: number)
+	local label = timeLabel
+	if not label then
+		return
+	end
+	local whole = math.ceil(seconds)
+	local text = string.format("%d:%02d", whole // 60, whole % 60)
+	if text ~= label.Text then
+		label.Text = text
+		if dropView then
+			popTime(label)
+		end
+	end
+end
+
+local function getGrowth(walls: number): number
+	return 1 + math.min(walls, MAX_SHAKE_WALLS) * GROW_STEP
+end
+
+local function emitMultiplierUp()
+	local template = multiplierUpTemplate
+	if not template then
+		return
+	end
+	local firstHue = random:NextNumber()
+	for index = 1, MULTIPLIER_UP_COUNT do
+		task.delay(random:NextNumber(0, MULTIPLIER_UP_SPREAD), function()
+			-- Gone if the character respawned since, which makes the gui again
+			local holder = template.Parent
+			if not (holder and template:IsDescendantOf(PlayerGui)) then
+				return
+			end
+			local image = template:Clone()
+			local x = random:NextNumber(0.05, 0.95)
+			local y = random:NextNumber(MULTIPLIER_UP_MIN_START, 1)
+			local tilt = random:NextNumber(-MULTIPLIER_UP_TILT, MULTIPLIER_UP_TILT)
+			image.AnchorPoint = Vector2.new(0.5, 0.5)
+			image.Position = UDim2.fromScale(x, y)
+			image.Rotation = tilt
+			-- Spread evenly round the rainbow
+			image.ImageColor3 = Color3.fromHSV((firstHue + index / MULTIPLIER_UP_COUNT) % 1, 1, 1)
+			image.Visible = true
+			image.Parent = holder
+
+			local duration = random:NextNumber(MULTIPLIER_UP_MIN_TIME, MULTIPLIER_UP_MAX_TIME)
+			-- Slows as it rises, and fades mostly towards the end
+			TweenService:Create(image, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.fromScale(x, y - random:NextNumber(MULTIPLIER_UP_MIN_RISE, MULTIPLIER_UP_MAX_RISE)),
+				Rotation = tilt + random:NextNumber(-MULTIPLIER_UP_TILT, MULTIPLIER_UP_TILT),
+			}):Play()
+			TweenService:Create(image, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				ImageTransparency = 1,
+			}):Play()
+			task.delay(duration, image.Destroy, image)
+		end)
+	end
+end
+
+-- The best multiplier the drop's items have reached, and how many walls that multiply they've
+-- passed. It slides in once it's past 1x, and pops bigger with every wall
+function HudController.SetDropMultiplier(value: number, walls: number)
+	multiplier = value
+	if valueLabel then
+		valueLabel.Text = `{value}x`
+	end
+	if walls ~= multiplierWalls then
+		if walls > multiplierWalls then
+			emitMultiplierUp()
+		end
+		multiplierWalls = walls
+		if valueScale then
+			TweenService:Create(valueScale, GROW_INFO, { Scale = getGrowth(walls) }):Play()
+		end
+	end
+	move("Multiplier", isShown("Multiplier"))
+end
+
+local function getRainbow(time: number): ColorSequence
+	local keypoints = {}
+	for index = 0, RAINBOW_COLORS - 1 do
+		local at = index / (RAINBOW_COLORS - 1)
+		-- Both ends are the same color, so it scrolls round without a seam
+		local hue = (at - time / RAINBOW_PERIOD) % 1
+		table.insert(keypoints, ColorSequenceKeypoint.new(at, Color3.fromHSV(hue, 1, 1)))
+	end
+	return ColorSequence.new(keypoints)
+end
+
+-- Every frame the multiplier's on screen: its rainbow scrolls, and it jumps about and tips
+local function animateMultiplier()
+	local piece = pieces.Multiplier
+	local label = valueLabel
+	if not (piece and label and piece.Gui.Visible) then
+		return
+	end
+	local now = os.clock()
+	if valueGradient then
+		valueGradient.Color = getRainbow(now)
+	end
+	if now >= nextShakeAt then
+		nextShakeAt = now + 1 / SHAKE_RATE
+		local strength = math.min(multiplierWalls, MAX_SHAKE_WALLS) ^ SHAKE_BUILD
+		local jump = strength * SHAKE_STEP
+		label.Position = valueRest + UDim2.fromScale(random:NextNumber(-jump, jump), random:NextNumber(-jump, jump))
+		label.Rotation = random:NextNumber(-1, 1) * strength * SHAKE_TILT_STEP
+	end
+end
+
 -- Puts the piece where it belongs in the view the player is in now, without moving it there. Guis
 -- are made again on every respawn, so each new copy gets this too
 local function addPiece(name: string, gui: GuiObject, side: Side?)
@@ -318,10 +528,33 @@ local function bindControls(gui: Instance)
 		addPiece(name, button, name)
 	end
 	addPiece("ControlFrame", frame, nil)
+
+	local timer = gui:WaitForChild("Time") :: GuiObject
+	timeLabel = timer:WaitForChild("Time") :: TextLabel
+	local icon = timer:WaitForChild("Icon") :: GuiObject
+	icon.Rotation = -ICON_TILT
+	TweenService:Create(icon, ICON_SWING_INFO, { Rotation = ICON_TILT }):Play()
+	addPiece("Time", timer, "Left")
+
+	local multiplierFrame = gui:WaitForChild("Multiplier") :: GuiObject
+	local value = multiplierFrame:WaitForChild("Value") :: TextLabel
+	anchorAtMiddle(value)
+	valueRest = value.Position
+	local scale = Instance.new("UIScale")
+	scale.Scale = getGrowth(multiplierWalls)
+	scale.Parent = value
+	valueLabel = value
+	valueScale = scale
+	valueGradient = value:FindFirstChildOfClass("UIGradient")
+	addPiece("Multiplier", multiplierFrame, "Right")
 end
 
 local function bindInventory(gui: Instance)
 	addPiece("Inventory", gui:WaitForChild("Main") :: GuiObject, "Bottom")
+end
+
+local function bindMultiplierUp(gui: Instance)
+	multiplierUpTemplate = gui:WaitForChild("Main"):WaitForChild("Template") :: ImageLabel
 end
 
 -- Found wherever they are in the gui, so the frames around them can change
@@ -340,6 +573,7 @@ function HudController.Start()
 		ControlGui = bindControls,
 		Inventory = bindInventory,
 		["Cash/Gem"] = bindCurrency,
+		MultiplierUp = bindMultiplierUp,
 	}
 	PlayerGui.ChildAdded:Connect(function(child)
 		local bind = binders[child.Name]
@@ -367,6 +601,7 @@ function HudController.Start()
 			updateButtons()
 		end
 	end)
+	RunService.RenderStepped:Connect(animateMultiplier)
 end
 
 return HudController
