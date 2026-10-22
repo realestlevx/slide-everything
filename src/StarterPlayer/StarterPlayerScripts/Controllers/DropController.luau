@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
+local Floors = require(ReplicatedStorage.Shared.Floors)
 local Items = require(ReplicatedStorage.Shared.Items)
 local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
@@ -19,7 +20,8 @@ local DropResult = ReplicatedStorage.Remotes.DropResult
 local LocalPlayer = Players.LocalPlayer
 
 local DROP_BUTTON_NAME = "Drop_Button" -- Model in a place holding the prompt that drops its items
-local DROP_FLOOR_NAME = "DropPart" -- The floor under a place's slots, which opens for the items to fall through
+-- The floor under a place's slots, and under each built floor's slots, which opens for the items to fall through
+local DROP_FLOOR_NAME = "DropPart"
 -- Invisible part across the funnel. Items can be steered once they're below it, whether or not they
 -- went through it: some slide down past its end
 local STEER_ZONE_NAME = "SteerEnable"
@@ -88,8 +90,10 @@ type DroppedItem = {
 type Drop = {
 	Place: Folder,
 	Prompt: ProximityPrompt,
-	Floor: BasePart?,
-	FloorCanCollide: boolean, -- The floor's own CanCollide, for when it closes again
+	Floor: BasePart?, -- The place's own, on floor 1
+	-- Every floor the items fall through, the built floors' above as well, and each one's own CanCollide,
+	-- for when it closes again
+	Openings: { [BasePart]: boolean },
 	Items: { DroppedItem },
 	StartedAt: number,
 	StartY: number,
@@ -244,8 +248,8 @@ local function endDrop()
 	showStats(current)
 	drop = nil
 
-	if current.Floor then
-		current.Floor.CanCollide = current.FloorCanCollide
+	for opening, canCollide in current.Openings do
+		opening.CanCollide = canCollide
 	end
 	task.delay(math.max(Drops.COOLDOWN - (os.clock() - current.StartedAt), 0), function()
 		if drop == nil then
@@ -463,8 +467,19 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	local current: Drop = {
 		Place = place,
 		Prompt = prompt,
+	local openings: { [BasePart]: boolean } = {}
+	if floor then
+		openings[floor] = floor.CanCollide
+	end
+	for number in Floors.Prices do
+		local built = place:FindFirstChild(Floors.GetName(number))
+		local opening = built and built:FindFirstChild(DROP_FLOOR_NAME)
+		if opening and opening:IsA("BasePart") then
+			openings[opening] = opening.CanCollide
+		end
+	end
 		Floor = floor,
-		FloorCanCollide = if floor then floor.CanCollide else true,
+		Openings = openings,
 		Items = {},
 		StartedAt = os.clock(),
 		StartY = startY,
@@ -496,8 +511,8 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	worldRay.FilterDescendantsInstances = ignored
 
 	-- Opened on this client only, so nothing else falls through
-	if floor then
-		floor.CanCollide = false
+	for opening in openings do
+		opening.CanCollide = false
 	end
 	PromptController.SetHidden(place, prompt, true)
 	SlotController.SetFaded(place, true)

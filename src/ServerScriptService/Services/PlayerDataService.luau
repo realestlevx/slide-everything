@@ -11,8 +11,9 @@ local PROFILE_TEMPLATE = {
 	Gems = 0,
 	MoneyPerSecond = 0,
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
-	Slots = {} :: { [string]: string }, -- Slot key (its SlotNumber as text) -> Uid of the inventory item placed in it
+	Slots = {} :: { [string]: string }, -- Slot key (see Places.GetSlotKey) -> Uid of the inventory item placed in it
 	BoughtSlots = {} :: { [string]: boolean }, -- Slot key -> true for every slot bought from the sign
+	Floors = 1, -- How many floors the place has for them, counting the first; see Floors
 	UpgradeLevels = {} :: { [string]: number }, -- Sign upgrade name (see SignUpgrades) -> level, 1 if missing
 	-- Stand number (as text) -> Item Id of its last roll if it wasn't bought, put back on the stand on join
 	LastRolls = {} :: { [string]: string },

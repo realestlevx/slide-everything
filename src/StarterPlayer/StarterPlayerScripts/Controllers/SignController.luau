@@ -66,9 +66,15 @@ local function refreshPanel(place: Folder, name: string, panel: Panel)
 	if name == SLOTS_PANEL then
 		local unlocked = place:GetAttribute("SlotsUnlocked")
 		local price = place:GetAttribute("NextSlotPrice")
+		-- Set instead once every slot is bought, while there's another floor to buy
+		local nextFloor = place:GetAttribute("NextFloor")
 		if typeof(unlocked) == "number" then
 			local nextPrice = if typeof(price) == "number" then price else nil
-			show(panel, if nextPrice then `{unlocked} > {unlocked + 1}` else `{unlocked}`, nextPrice)
+			local value = if typeof(nextFloor) == "number"
+				then `Floor {nextFloor}`
+				elseif nextPrice then `{unlocked} > {unlocked + 1}`
+				else `{unlocked}`
+			show(panel, value, nextPrice)
 		end
 		return
 	end
@@ -217,7 +223,7 @@ local function onResult(name: string, bought: boolean)
 end
 
 function SignController.Start()
-	local attributes = { "SlotsUnlocked", "NextSlotPrice" }
+	local attributes = { "SlotsUnlocked", "NextSlotPrice", "NextFloor" }
 	for name in SignUpgrades.Upgrades do
 		table.insert(attributes, `{name}Level`)
 	end

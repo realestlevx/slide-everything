@@ -31,8 +31,8 @@ function Places.Find(instance: Instance): Folder?
 end
 
 -- A Model in a place with a SlotNumber attribute holds one item, whatever it's called. Slots are
--- bought in SlotNumber order (1, 2, 3, ...) and saves remember them by it, so every slot in a place
--- needs a number of its own. Later floors' slots just carry on counting
+-- bought floor by floor, in SlotNumber order (1, 2, 3, ...), and saves remember them by their floor
+-- and number, so every slot on a floor needs a number of its own. Each floor counts from 1
 function Places.IsSlot(instance: Instance): boolean
 	local place = instance.Parent
 	return instance:IsA("Model")
@@ -46,9 +46,19 @@ function Places.GetSlotNumber(slot: Model): number
 	return slot:GetAttribute("SlotNumber") :: number
 end
 
--- The slot's key in saves. Text, since saved tables can't have gaps in number keys
+-- The floor the slot is on, from its Floor attribute (see SlotService). Floor 1 without one
+function Places.GetSlotFloor(slot: Model): number
+	local floor = slot:GetAttribute("Floor")
+	return if typeof(floor) == "number" then floor else 1
+end
+
+-- The slot's key in saves. Text, since saved tables can't have gaps in number keys. A later floor's
+-- keys start with the floor, like "2-5", and floor 1's are just the number, as they were before there
+-- were floors
 function Places.GetSlotKey(slot: Model): string
-	return tostring(Places.GetSlotNumber(slot))
+	local number = tostring(Places.GetSlotNumber(slot))
+	local floor = Places.GetSlotFloor(slot)
+	return if floor > 1 then `{floor}-{number}` else number
 end
 
 -- What the slot costs on the sign, from its Price attribute. Without one it's free from the start
@@ -70,7 +80,7 @@ function Places.GetStandNumber(instance: Instance): number?
 	return if number then tonumber(number) else nil
 end
 
--- In SlotNumber order, which is the order they're bought in
+-- Floor by floor in SlotNumber order, which is the order they're bought in
 function Places.GetSlots(place: Folder): { Model }
 	local slots = {}
 	for _, child in place:GetChildren() do
@@ -79,6 +89,10 @@ function Places.GetSlots(place: Folder): { Model }
 		end
 	end
 	table.sort(slots, function(a, b)
+		local aFloor, bFloor = Places.GetSlotFloor(a), Places.GetSlotFloor(b)
+		if aFloor ~= bFloor then
+			return aFloor < bFloor
+		end
 		return Places.GetSlotNumber(a) < Places.GetSlotNumber(b)
 	end)
 	return slots

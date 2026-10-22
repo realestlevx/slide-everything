@@ -10,6 +10,7 @@ local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
+local FloorService = require(script.Parent.FloorService)
 local InventoryService = require(script.Parent.InventoryService)
 local PlaceService = require(script.Parent.PlaceService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
@@ -28,6 +29,9 @@ local PASS_SLOT_TEMPLATE_NAME = "Paid_Slot" -- Model in ServerStorage that pass 
 -- Invisible parts anywhere in a place marking where its slots go. Each stands in for its slot's
 -- Slot_Place and carries the slot's SlotNumber and Price attributes
 local SLOT_POSITION_NAME = "Slot_Position"
+-- A later floor's markers are in a folder named after it, like Floor2_Slot_Positions; any others are
+-- on floor 1
+local FLOOR_FOLDER_PATTERN = "^Floor(%d+)_Slot_Positions$"
 -- On a slot that comes with the GamePasses.PaidSlots pass instead of a price: there for everyone to
 -- see from the start, and usable once the place's owner has the pass
 local GAME_PASS_ATTRIBUTE = "GamePass"
@@ -54,8 +58,15 @@ local function getTemplate(name: string): (Model?, CFrame)
 	return template, templatePart.CFrame:ToObjectSpace(template:GetPivot())
 end
 
+local function getMarkerFloor(marker: BasePart): number
+	local folder = marker.Parent
+	local number = folder and folder.Name:match(FLOOR_FOLDER_PATTERN)
+	return if number then tonumber(number) :: number else 1
+end
+
 -- Puts a copy of the slot template on each of the place's Slot_Position parts, with the part's
--- attributes; pass slots get the pass slot template. The part goes once its slot is there
+-- attributes and the floor it's on; pass slots get the pass slot template. The part goes once its
+-- slot is there
 local function spawnSlots(place: Folder)
 	local slotTemplate, slotOffset = getTemplate(SLOT_TEMPLATE_NAME)
 	local passTemplate, passOffset = getTemplate(PASS_SLOT_TEMPLATE_NAME)
@@ -76,11 +87,13 @@ local function spawnSlots(place: Folder)
 			continue
 		end
 
+		local floor = getMarkerFloor(marker)
 		local slot = template:Clone()
-		slot.Name = `Slot_{number}`
+		slot.Name = if floor > 1 then `Floor{floor}_Slot_{number}` else `Slot_{number}`
 		for name, value in marker:GetAttributes() do
 			slot:SetAttribute(name, value)
 		end
+		slot:SetAttribute("Floor", floor)
 		for _, billboardName in DESIGN_BILLBOARDS do
 			local billboard = slot:FindFirstChild(billboardName, true)
 			if billboard and billboard:IsA("BillboardGui") then
@@ -128,21 +141,28 @@ local function isPassSlot(slot: Model): boolean
 	return slot:GetAttribute(GAME_PASS_ATTRIBUTE) == true
 end
 
--- Free slots are always there, pass slots once the owner has the pass, and the rest once bought from
--- the sign
+-- Whether the place's owner has the floor the slot is on. Only floor 1 while nobody owns it
+local function isOnBuiltFloor(data: PlayerDataService.Data?, slot: Model): boolean
+	return Places.GetSlotFloor(slot) <= (if data then data.Floors else 1)
+end
+
+-- Nothing on a floor the owner doesn't have is there. On the floors they have, free slots are always
+-- there, pass slots once the owner has the pass, and the rest once bought from the sign
 local function isUnlocked(owner: Player?, data: PlayerDataService.Data?, slot: Model): boolean
-	if isPassSlot(slot) then
+	if not isOnBuiltFloor(data, slot) then
+		return false
+	elseif isPassSlot(slot) then
 		return owner ~= nil and passOwners[owner] == true
 	end
 	return Places.GetSlotPrice(slot) <= 0 or (data ~= nil and data.BoughtSlots[Places.GetSlotKey(slot)] == true)
 end
 
--- A slot that isn't bought yet isn't there: hidden for everyone. Pass slots are always there, to
--- show what the pass gets. The Unlocked attribute tells clients what its place prompt is for, and
--- the sign which slot is next
-local function setUnlocked(slot: Model, unlocked: boolean)
+-- A slot that isn't bought yet isn't there: hidden for everyone. Pass slots are there as soon as
+-- their floor is, to show what the pass gets. The Unlocked attribute tells clients what its place
+-- prompt is for, and the sign which slot is next
+local function setUnlocked(slot: Model, data: PlayerDataService.Data?, unlocked: boolean)
 	slot:SetAttribute("Unlocked", unlocked)
-	local shown = unlocked or isPassSlot(slot)
+	local shown = unlocked or (isPassSlot(slot) and isOnBuiltFloor(data, slot))
 	for _, part in slot:GetDescendants() do
 		if part:IsA("BasePart") and part.Name ~= SLOT_ITEM_NAME and not part:FindFirstAncestor(SLOT_ITEM_NAME) then
 			local ownTransparency = partTransparencies[part] or part.Transparency
@@ -152,20 +172,32 @@ local function setUnlocked(slot: Model, unlocked: boolean)
 	end
 end
 
--- The next slot up for sale: the first, in SlotNumber order, that isn't free or bought yet. Pass
--- slots aren't sold on the sign
+-- The next slot up for sale: the first, floor by floor in SlotNumber order, that isn't free or bought
+-- yet, on a floor the player has. Pass slots aren't sold on the sign
 local function getNextSlot(place: Folder, data: PlayerDataService.Data): Model?
 	for _, slot in Places.GetSlots(place) do
-		if not isPassSlot(slot) and not isUnlocked(nil, data, slot) then
+		if not isPassSlot(slot) and isOnBuiltFloor(data, slot) and not isUnlocked(nil, data, slot) then
 			return slot
 		end
 	end
 	return nil
 end
 
+-- The floor the sign sells once every slot on the player's floors is bought, and its price. Nil
+-- while there are slots left, or once there are no more floors
+local function getNextFloor(place: Folder, data: PlayerDataService.Data): (number?, number?)
+	if getNextSlot(place, data) then
+		return nil, nil
+	end
+	local number = data.Floors + 1
+	local price = FloorService.GetPrice(place, number)
+	return if price then number else nil, price
+end
+
 -- What the place's Increase Slots sign shows, as attributes on the place: slots are streamed, so
--- clients can't always count them. NextSlotPrice is nil once every slot is bought. Pass slots
--- don't count, as the sign doesn't sell them
+-- clients can't always count them. NextSlotPrice is what the next slot costs, or the next floor once
+-- every slot is bought (NextFloor says which), and nil once there's nothing left. Pass slots don't
+-- count, as the sign doesn't sell them
 local function updateSign(place: Folder, data: PlayerDataService.Data?)
 	local unlocked = 0
 	for _, slot in Places.GetSlots(place) do
@@ -174,8 +206,13 @@ local function updateSign(place: Folder, data: PlayerDataService.Data?)
 		end
 	end
 	local nextSlot = if data then getNextSlot(place, data) else nil
+	local nextFloor, floorPrice = nil, nil
+	if data then
+		nextFloor, floorPrice = getNextFloor(place, data)
+	end
 	place:SetAttribute("SlotsUnlocked", unlocked)
-	place:SetAttribute("NextSlotPrice", if nextSlot then Places.GetSlotPrice(nextSlot) else nil)
+	place:SetAttribute("NextSlotPrice", if nextSlot then Places.GetSlotPrice(nextSlot) else floorPrice)
+	place:SetAttribute("NextFloor", nextFloor)
 end
 
 -- What each of the player's slots earns per second, by slot key, and all of them together
@@ -253,7 +290,7 @@ local function refreshPlace(place: Folder)
 	end
 
 	for _, slot in Places.GetSlots(place) do
-		setUnlocked(slot, isUnlocked(owner, data, slot))
+		setUnlocked(slot, data, isUnlocked(owner, data, slot))
 		local uid = data and data.Slots[Places.GetSlotKey(slot)]
 		local owned = if owner and uid then InventoryService.Find(owner, uid) else nil
 		show(slot, owned)
@@ -267,6 +304,10 @@ local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 	if place:GetAttribute("OwnerUserId") ~= player.UserId then
 		return
 	end
+	local data = PlayerDataService.Get(player)
+	if not isOnBuiltFloor(data, slot) then
+		return
+	end
 	if isPassSlot(slot) and not passOwners[player] then
 		if GamePasses.PaidSlots > 0 then
 			MarketplaceService:PromptGamePassPurchase(player, GamePasses.PaidSlots)
@@ -276,7 +317,6 @@ local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 		return
 	end
 
-	local data = PlayerDataService.Get(player)
 	local owned = InventoryService.GetEquipped(player)
 	local item = owned and Items[owned.Id]
 	if not (data and owned and item) then
@@ -350,8 +390,34 @@ local function onUpgrade(player: Player, slot: any)
 	UpgradeResult:FireClient(player, slot, true)
 end
 
--- The sign's Increase Slots button: buys the next slot, if the player can pay for it. Only at the
--- player's own place, whichever sign was clicked
+-- With every slot on their floors bought, the sign sells the player the next floor. Its free slots
+-- open with it
+local function buyFloor(player: Player, place: Folder, data: PlayerDataService.Data)
+	local number, price = getNextFloor(place, data)
+	if not (number and price) then
+		return
+	end
+	if data.Money < price then
+		BuySlotResult:FireClient(player, false)
+		return
+	end
+
+	PlayerDataService.AddMoney(player, -price)
+	-- The result goes out before the floor is built, so the client knows the floor that arrives is
+	-- its own purchase, and can build it up in front of the player
+	BuySlotResult:FireClient(player, true, number)
+	FloorService.Add(place, data)
+	for _, slot in Places.GetSlots(place) do
+		if Places.GetSlotFloor(slot) == number then
+			setUnlocked(slot, data, isUnlocked(player, data, slot))
+		end
+	end
+	updateSign(place, data)
+	InventoryService.EnsureCanStart(player)
+end
+
+-- The sign's Increase Slots button: buys the next slot, or the next floor once there are none left,
+-- if the player can pay for it. Only at the player's own place, whichever sign was clicked
 local function onBuySlot(player: Player, place: any)
 	local data = PlayerDataService.Get(player)
 	if not (data and place ~= nil and place == PlaceService.GetPlace(player)) then
@@ -359,6 +425,7 @@ local function onBuySlot(player: Player, place: any)
 	end
 	local slot = getNextSlot(place, data)
 	if not slot then
+		buyFloor(player, place, data)
 		return
 	end
 
@@ -370,7 +437,7 @@ local function onBuySlot(player: Player, place: any)
 
 	PlayerDataService.AddMoney(player, -price)
 	data.BoughtSlots[Places.GetSlotKey(slot)] = true
-	setUnlocked(slot, true)
+	setUnlocked(slot, data, true)
 	updateSign(place, data)
 	-- Spending the starting money on slots before buying an item would leave nothing to earn with
 	InventoryService.EnsureCanStart(player)
@@ -417,7 +484,9 @@ function SlotService.Start()
 		for _, slot in Places.GetSlots(place) do
 			local key = Places.GetSlotKey(slot)
 			if numbers[key] then
-				warn(`{place.Name} has more than one slot with SlotNumber {key}. Slots are saved by number, so give each its own`)
+				warn(
+					`{place.Name} has more than one slot with SlotNumber {Places.GetSlotNumber(slot)} on floor {Places.GetSlotFloor(slot)}. Slots are saved by floor and number, so give each its own`
+				)
 			end
 			numbers[key] = true
 

@@ -146,7 +146,10 @@ local function refresh(slot: Model)
 	local slotPart = slot:FindFirstChild(Places.SLOT_PART)
 	local prompt = slotPart and slotPart:FindFirstChildOfClass("ProximityPrompt")
 	local unlocked = slot:GetAttribute("Unlocked") == true
-	if prompt and slot:GetAttribute("GamePass") == true and not unlocked then
+	-- The server keeps how many floors the owner has on the place
+	local floors = place:GetAttribute("Floors")
+	local built = Places.GetSlotFloor(slot) <= (if typeof(floors) == "number" then floors else 1)
+	if prompt and slot:GetAttribute("GamePass") == true and not unlocked and built then
 		-- A pass slot the owner doesn't have yet sells the pass, so its prompt is always up
 		local color = prompt:GetAttribute("ProximityTextColor")
 		if not promptColors[prompt] and typeof(color) == "Color3" then
@@ -530,13 +533,15 @@ function SlotController.Start()
 			onDescendantAdded(place, descendant)
 		end)
 
-		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+		local function refreshPlace()
 			for slot, slotPlace in slotPlaces do
 				if slotPlace == place then
 					refresh(slot)
 				end
 			end
-		end)
+		end
+		place:GetAttributeChangedSignal("OwnerUserId"):Connect(refreshPlace)
+		place:GetAttributeChangedSignal("Floors"):Connect(refreshPlace)
 	end
 
 	-- Picking an item up or putting it away shows or hides the place prompts
