@@ -75,7 +75,7 @@ local function onBuy(player: Player, place: any, name: any)
 	-- stand is its own purchase, and can shrink it to grow, before the stand reaches it
 	BuyUpgradeResult:FireClient(player, name, true, level + 1)
 	place:SetAttribute(`{name}Level`, level + 1)
-	-- Same as for slots, and more luck also makes the cheapest items rarer
+	-- Same as for slots, and more luck takes the cheapest items out of the rolls
 	InventoryService.EnsureCanStart(player)
 end
 
