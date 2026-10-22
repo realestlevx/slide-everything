@@ -450,6 +450,17 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 
 	local found = place:FindFirstChild(DROP_FLOOR_NAME)
 	local floor = if found and found:IsA("BasePart") then found else nil
+	local openings: { [BasePart]: boolean } = {}
+	if floor then
+		openings[floor] = floor.CanCollide
+	end
+	for number in Floors.Prices do
+		local built = place:FindFirstChild(Floors.GetName(number))
+		local opening = built and built:FindFirstChild(DROP_FLOOR_NAME)
+		if opening and opening:IsA("BasePart") then
+			openings[opening] = opening.CanCollide
+		end
+	end
 	local start = if floor then floor.Position else toDrop[1].CFrame.Position
 	-- The slide runs toward the floor's -X side
 	local direction = flatten(if floor then -floor.CFrame.RightVector else -Vector3.xAxis).Unit
@@ -467,17 +478,6 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	local current: Drop = {
 		Place = place,
 		Prompt = prompt,
-	local openings: { [BasePart]: boolean } = {}
-	if floor then
-		openings[floor] = floor.CanCollide
-	end
-	for number in Floors.Prices do
-		local built = place:FindFirstChild(Floors.GetName(number))
-		local opening = built and built:FindFirstChild(DROP_FLOOR_NAME)
-		if opening and opening:IsA("BasePart") then
-			openings[opening] = opening.CanCollide
-		end
-	end
 		Floor = floor,
 		Openings = openings,
 		Items = {},
