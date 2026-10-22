@@ -5,6 +5,8 @@ local TweenService = game:GetService("TweenService")
 local Places = require(ReplicatedStorage.Shared.Places)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 
+local BillboardRangeController = require(script.Parent.BillboardRangeController)
+
 local BuyUpgradeResult = ReplicatedStorage.Remotes.BuyUpgradeResult
 local LocalPlayer = Players.LocalPlayer
 
@@ -67,6 +69,11 @@ local function shrink(stand: Model): ((number) -> (), Vector3)
 	local function setScale(scale: number)
 		stand:ScaleTo(scale)
 		stand:PivotTo(bottom * CFrame.new(offset.Position * scale) * offset.Rotation)
+	end
+	-- ScaleTo shrinks the stats billboard's MaxDistance along with the stand, and a range taken from
+	-- that would keep it hidden for good
+	for _, descendant in stand:GetDescendants() do
+		BillboardRangeController.Track(descendant)
 	end
 	setScale(START_SCALE)
 	return setScale, boxCFrame.Position

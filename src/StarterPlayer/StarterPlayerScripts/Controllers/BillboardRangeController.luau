@@ -43,7 +43,9 @@ local function update(billboard: BillboardGui, range: number, from: Vector3)
 	end
 end
 
-local function track(instance: Instance)
+-- Every billboard is tracked as it appears. Anything that scales a model down (Model:ScaleTo scales
+-- MaxDistance too) tracks its billboards first, so their range is taken at full size
+function BillboardRangeController.Track(instance: Instance)
 	if not instance:IsA("BillboardGui") then
 		return
 	end
@@ -67,9 +69,9 @@ end
 function BillboardRangeController.Start()
 	for _, root in { workspace, PlayerGui } do
 		for _, descendant in root:GetDescendants() do
-			track(descendant)
+			BillboardRangeController.Track(descendant)
 		end
-		root.DescendantAdded:Connect(track)
+		root.DescendantAdded:Connect(BillboardRangeController.Track)
 	end
 
 	task.spawn(function()
