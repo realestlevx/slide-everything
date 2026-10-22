@@ -34,6 +34,7 @@ local GAME_PASS_ATTRIBUTE = "GamePass"
 -- Billboards in a slot that are only designs: each client copies them (the stats and buttons, and
 -- the "+ $" popups) and shows its copies, so the slot's own stay hidden, even in the server's view
 local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash" }
+local PLACE_COUNT_ATTRIBUTE = "PlaceCount" -- On a slot: how many times an item was put in it by hand
 
 local rarityPartColors: { [BasePart]: Color3 } = {} -- Each Rarity part's own color, for empty slots
 local partTransparencies: { [BasePart]: number } = {} -- Each slot part's own transparency, for once it's bought
@@ -288,6 +289,9 @@ local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 
 	data.Slots[key] = owned.Uid
 	InventoryService.Equip(player, nil)
+	-- Counted before the item shows, so clients know it was put in by hand and play its landing. A
+	-- slot filled from its owner's save as they join doesn't count, and just shows its item
+	slot:SetAttribute(PLACE_COUNT_ATTRIBUTE, (slot:GetAttribute(PLACE_COUNT_ATTRIBUTE) or 0) + 1)
 	show(slot, owned)
 	InventoryService.Sync(player)
 	updateMoneyPerSecond(player)

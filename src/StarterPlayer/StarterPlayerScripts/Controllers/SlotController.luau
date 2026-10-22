@@ -56,7 +56,9 @@ local LAND_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirectio
 local FLASH_TRANSPARENCY = 0 -- The rarity part at its brightest, fading back to its own transparency
 local FLASH_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local PLACE_TIMEOUT = 3 -- Seconds the flown item waits for the server's before going back to the hand
-local FRESH_TIME = 1 -- Seconds after a slot's ItemId changes that an item arriving in it is a new one
+-- Seconds after a slot's PlaceCount goes up (an item put in by hand, not one shown as its owner's
+-- save loads) that an item arriving in it lands
+local FRESH_TIME = 1
 local GIVE_UP_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 type Placing = {
@@ -74,7 +76,7 @@ local promptColors: { [ProximityPrompt]: Color3 } = {}
 local fadedPlaces: { [Folder]: boolean } = {} -- Places whose slots are faded out while their items drop
 local billboardSizes: { [BillboardGui]: UDim2 } = {} -- Each billboard's own size, taken before it first shrinks away
 local placing: { [Model]: Placing } = {} -- Slots this player is putting an item into right now
-local filledAt: { [Model]: number } = {} -- When each slot last got an ItemId
+local filledAt: { [Model]: number } = {} -- When an item was last put in each slot by hand
 local rarityTransparencies: { [BasePart]: number } = {} -- Each rarity part's own transparency, taken before it first flashes
 
 local SlotController = {}
@@ -184,10 +186,10 @@ local function watchSlot(place: Folder, slot: Model)
 		return
 	end
 	slotPlaces[slot] = place
+	slot:GetAttributeChangedSignal("PlaceCount"):Connect(function()
+		filledAt[slot] = os.clock()
+	end)
 	slot:GetAttributeChangedSignal("ItemId"):Connect(function()
-		if slot:GetAttribute("ItemId") ~= nil then
-			filledAt[slot] = os.clock()
-		end
 		refresh(slot)
 	end)
 	slot:GetAttributeChangedSignal("ItemLevel"):Connect(function()
