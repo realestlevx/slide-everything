@@ -50,15 +50,78 @@ table.sort(rollable, function(a, b)
 	return if shares[a] ~= shares[b] then shares[a] < shares[b] else a.Id < b.Id
 end)
 
--- The item's share with luck: multiplied by the luck to the item's LuckPower (see Items)
-local function getLuckyWeight(item: Items.Item, luck: number): number
-	return shares[item] * luck ^ (item.LuckPower or 1)
+-- Luck moves a window up the odds, raising both the floor and the ceiling of what rolls. Each luck
+-- has a floor and a ceiling, as 1 in N odds. Items commoner than the floor fade out, down to FADE
+-- times commoner, and don't roll at all below that. From the floor up to the ceiling, items are
+-- spread out by their own odds so that one at the ceiling rolls SPREAD times less often than one at
+-- the floor, and past the ceiling they get rarer at their own rate again. So it's each item's own
+-- odds that count, whatever its rarity. Between anchors the curves run evenly on a log scale, and
+-- past the last one they stay put. At 1x the ceiling is SPREAD above a floor of 1 in 1, so the odds
+-- are exactly what the stands show.
+-- They're set against every item on the economy sheet, the ones not in the game yet too: 10x starts
+-- rolling Rares, 20x no Uncommons any more but a few Epics, 30x the odd Legendary and Mythic, 40x
+-- Legendaries, Mythics and a few Exotics, and 100x mostly Mythic and above, with Legendaries still in
+local FLOOR = { -- Luck, and the 1 in N it's at
+	{ 1, 1 },
+	{ 8, 1 },
+	{ 15, 60 },
+	{ 20, 900 },
+	{ 30, 3000 },
+	{ 40, 12000 },
+	{ 50, 40000 },
+	{ 60, 100000 },
+	{ 70, 180000 },
+	{ 80, 280000 },
+	{ 90, 400000 },
+	{ 100, 550000 },
+}
+local CEILING = { -- Luck, and the 1 in N it's at
+	{ 1, 100 },
+	{ 10, 1000 },
+	{ 20, 10000 },
+	{ 30, 300000 },
+	{ 40, 3e6 },
+	{ 50, 15e6 },
+	{ 60, 50e6 },
+	{ 70, 150e6 },
+	{ 80, 400e6 },
+	{ 90, 1e9 },
+	{ 100, 3e9 },
+}
+local SPREAD = 100
+local FADE = 10
+
+local spreadLog = math.log10(SPREAD)
+local fadeLog = math.log10(FADE)
+
+-- Where the curve is at this luck, as the log of its 1 in N
+local function getCurve(anchors: { { number } }, luck: number): number
+	for index = 1, #anchors - 1 do
+		local from, to = anchors[index], anchors[index + 1]
+		if luck <= to[1] then
+			local alpha = math.clamp((luck - from[1]) / (to[1] - from[1]), 0, 1)
+			return math.log10(from[2]) + (math.log10(to[2]) - math.log10(from[2])) * alpha
+		end
+	end
+	return math.log10(anchors[#anchors][2])
 end
 
--- Every item's share is changed by the luck as its LuckPower says, then all of them are scaled back
--- to add up to 1 and the roll is matched against them. At 1x luck the odds are exactly what the
--- stands show. Luck that boosts the rare items and shrinks the Commons takes both ways at once: at 9x,
--- a Common at -1 is 9x less likely next to an item at 1, so the rare items gain more than 9x
+-- The item's weight at this luck: its own odds, moved by the luck's floor and ceiling as above
+local function getLuckyWeight(item: Items.Item, luck: number): number
+	local odds = -math.log10(shares[item]) -- The log of its 1 in N
+	local floorOdds = getCurve(FLOOR, luck)
+	local ceilingOdds = math.max(getCurve(CEILING, luck), floorOdds + spreadLog)
+	local squash = spreadLog / (ceilingOdds - floorOdds)
+	local alpha = math.clamp((odds - floorOdds + fadeLog) / fadeLog, 0, 1)
+	local kept = alpha * alpha * (3 - 2 * alpha)
+	local rarity = if odds <= ceilingOdds
+		then squash * (odds - floorOdds)
+		else squash * (ceilingOdds - floorOdds) + odds - ceilingOdds
+	return 10 ^ -rarity * kept
+end
+
+-- Each item's weight comes from its own odds and the luck (see FLOOR and CEILING), then all of them
+-- are scaled back to add up to 1 and the roll is matched against them
 function Rolling.Pick(rng: Random, luck: number?): Items.Item
 	local multiplier = math.max(luck or 1, 1)
 	local total = 0
@@ -68,25 +131,35 @@ function Rolling.Pick(rng: Random, luck: number?): Items.Item
 
 	local roll = rng:NextNumber() * total
 	local reach = 0
+	local last = rollable[1]
 	for _, item in rollable do
-		reach += getLuckyWeight(item, multiplier)
-		if roll < reach then
-			return item
+		local weight = getLuckyWeight(item, multiplier)
+		if weight > 0 then
+			reach += weight
+			last = item
+			if roll < reach then
+				return item
+			end
 		end
 	end
 
-	-- Floating point leftovers land on the commonest item
-	return rollable[#rollable]
+	-- Floating point leftovers land on the commonest item still in the rolls. With luck's floor past
+	-- every item, the rarest one is all that rolls
+	return last
 end
 
--- What the cheapest item a roll can land on costs. Luck makes items rarer or likelier, but never
--- rules one out
-function Rolling.GetCheapestPrice(): number
+-- What the cheapest item a roll can land on at this luck costs. Luck's floor takes the commoner
+-- items out of the rolls as it grows, so it's dearer at higher luck
+function Rolling.GetCheapestPrice(luck: number?): number
+	local multiplier = math.max(luck or 1, 1)
 	local cheapest = math.huge
 	for _, item in rollable do
-		cheapest = math.min(cheapest, item.Price)
+		if getLuckyWeight(item, multiplier) > 0 then
+			cheapest = math.min(cheapest, item.Price)
+		end
 	end
-	return cheapest
+	-- With the floor past every item, the rarest is what rolls (see Pick)
+	return if cheapest < math.huge then cheapest elseif rollable[1] then rollable[1].Price else 0
 end
 
 -- The item's odds without luck, as shown on the stand. Infinite for items that never roll

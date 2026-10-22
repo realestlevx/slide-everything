@@ -7,6 +7,7 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local PlayerDataService = require(script.Parent.PlayerDataService)
@@ -204,7 +205,8 @@ function InventoryService.EnsureCanStart(player: Player)
 	if not (data and #data.Inventory == 0) then
 		return
 	end
-	local cheapest = Rolling.GetCheapestPrice()
+	-- At their own luck, which takes the commoner items out of the rolls as it grows
+	local cheapest = Rolling.GetCheapestPrice(SignUpgrades.GetValue("Luck", data.UpgradeLevels.Luck or 1))
 	if data.Money < cheapest then
 		PlayerDataService.SetMoney(player, cheapest)
 	end
