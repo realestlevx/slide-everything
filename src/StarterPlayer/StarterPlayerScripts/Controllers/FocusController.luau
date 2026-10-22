@@ -9,8 +9,8 @@ local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local LocalPlayer = Players.LocalPlayer
 
 -- Items the player is close enough to use grow and light up white, on their screen only: their own
--- slotted items while the slot's upgrade billboard is in range, and the item on their roll stand
--- while its buy prompt is up. Any highlight the item already has, like its rarity outline, is
+-- slotted items while the slot's upgrade billboard is in range, and the item on each of their roll
+-- stands while its buy prompt is up. Any highlight the item already has, like its rarity outline, is
 -- swapped out meanwhile
 local FOCUS_SCALE = 1.3
 local FOCUS_HIGHLIGHT = {
@@ -27,7 +27,6 @@ local SLOT_ITEM_NAME = "SlotItem"
 local UPGRADE_BILLBOARD_NAME = "Stuff_UpgradeDisplay"
 local RANGE_ATTRIBUTE = "Range"
 local DEFAULT_RANGE = 15 -- Studs, for a slot whose billboard hasn't streamed in
-local STAND_NAME = "RollStand_1"
 local ROLL_PLACE_NAME = "Roll_Place" -- Holds the stand's buy prompt
 -- The owner's own copy of what's on the stand, or the server's when it wasn't rolled just now
 local STAND_ITEM_NAMES = { "RollPreview", "RolledItem" }
@@ -38,7 +37,7 @@ type Focus = {
 }
 
 local focused: { [BasePart]: Focus } = {}
-local buyShown: { [Folder]: boolean } = {} -- Places whose buy prompt is up for this player
+local buyShown: { [Model]: boolean } = {} -- Roll stands whose buy prompt is up for this player
 
 local FocusController = {}
 
@@ -99,14 +98,14 @@ local function findWanted(from: Vector3): { [BasePart]: boolean }
 				end
 			end
 		end
+	end
 
-		local stand = place:FindFirstChild(STAND_NAME)
-		if buyShown[place] and stand then
-			for _, name in STAND_ITEM_NAMES do
-				local item = stand:FindFirstChild(name)
-				if item and item:IsA("BasePart") then
-					wanted[item] = true
-				end
+	-- Buy prompts only show at the player's own place
+	for stand in buyShown do
+		for _, name in STAND_ITEM_NAMES do
+			local item = stand:FindFirstChild(name)
+			if item and item:IsA("BasePart") then
+				wanted[item] = true
 			end
 		end
 	end
@@ -130,27 +129,27 @@ local function update()
 	end
 end
 
-local function getBuyPlace(prompt: ProximityPrompt): Folder?
+local function getBuyStand(prompt: ProximityPrompt): Model?
 	local rollPlace = prompt.Parent
 	local stand = rollPlace and rollPlace.Parent
-	if rollPlace and rollPlace.Name == ROLL_PLACE_NAME and stand and stand.Name == STAND_NAME then
-		return Places.Find(prompt)
+	if rollPlace and rollPlace.Name == ROLL_PLACE_NAME and stand and Places.GetStandNumber(stand) then
+		return stand :: Model
 	end
 	return nil
 end
 
 function FocusController.Start()
 	ProximityPromptService.PromptShown:Connect(function(prompt)
-		local place = getBuyPlace(prompt)
-		if place then
-			buyShown[place] = true
+		local stand = getBuyStand(prompt)
+		if stand then
+			buyShown[stand] = true
 			update()
 		end
 	end)
 	ProximityPromptService.PromptHidden:Connect(function(prompt)
-		local place = getBuyPlace(prompt)
-		if place then
-			buyShown[place] = nil
+		local stand = getBuyStand(prompt)
+		if stand then
+			buyShown[stand] = nil
 			update()
 		end
 	end)

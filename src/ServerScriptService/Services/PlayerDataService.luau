@@ -14,7 +14,8 @@ local PROFILE_TEMPLATE = {
 	Slots = {} :: { [string]: string }, -- Slot key (its SlotNumber as text) -> Uid of the inventory item placed in it
 	BoughtSlots = {} :: { [string]: boolean }, -- Slot key -> true for every slot bought from the sign
 	UpgradeLevels = {} :: { [string]: number }, -- Sign upgrade name (see SignUpgrades) -> level, 1 if missing
-	LastRoll = nil :: string?, -- Item Id of the last roll if it wasn't bought, put back on the stand on join
+	-- Stand number (as text) -> Item Id of its last roll if it wasn't bought, put back on the stand on join
+	LastRolls = {} :: { [string]: string },
 	CollectCash = 0, -- Earned by drops, waiting on the place's collect pad to be picked up
 	CollectItems = {} :: { string }, -- Item Ids of the latest finished drops, piled on the collect pad
 }
@@ -66,6 +67,12 @@ local function onPlayerAdded(player: Player)
 
 	profile:AddUserId(player.UserId) -- GDPR compliance
 	profile:Reconcile() -- Fill in missing template keys
+	-- Saves from before there were several roll stands kept one roll, which was the first stand's
+	local data = profile.Data :: any
+	if data.LastRoll then
+		data.LastRolls["1"] = data.LastRolls["1"] or data.LastRoll
+		data.LastRoll = nil
+	end
 
 	profile.OnSessionEnd:Connect(function()
 		Profiles[player] = nil

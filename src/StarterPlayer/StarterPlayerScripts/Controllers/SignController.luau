@@ -41,6 +41,7 @@ type Sign = {
 
 local signs: { [SurfaceGui]: Sign } = {} -- The sign's own SurfaceGui -> its copy
 local priceColors: { [TextLabel]: Color3 } = {} -- Each price label's own color, taken before it first flashes
+local lastClicks: { [string]: number } = {} -- Panel name -> when its button last took a click, on any sign
 
 local SignController = {}
 
@@ -94,6 +95,15 @@ local function refreshPlace(place: Folder)
 end
 
 local function buy(place: Folder, name: string)
+	-- Upgrades with a cooldown ignore clicks until it's over
+	local upgrade = SignUpgrades.Upgrades[name]
+	local cooldown = upgrade and upgrade.Cooldown
+	local now = os.clock()
+	if cooldown and now - (lastClicks[name] or -math.huge) < cooldown then
+		return
+	end
+	lastClicks[name] = now
+
 	if name == SLOTS_PANEL then
 		BuySlot:FireServer(place)
 	else

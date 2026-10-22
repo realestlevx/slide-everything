@@ -57,6 +57,19 @@ function Places.GetSlotPrice(slot: Model): number
 	return if typeof(price) == "number" then price else 0
 end
 
+-- Roll stands are Models named RollStand_<number> in a place. Stand 1 is built into the place, and
+-- the rest are copied in on markers (see RollService). A place's owner has the first ones, as many
+-- as their Roll Slots upgrade gives
+function Places.GetStandName(number: number): string
+	return `RollStand_{number}`
+end
+
+-- The stand's number, or nil if the instance isn't a stand
+function Places.GetStandNumber(instance: Instance): number?
+	local number = if instance:IsA("Model") then instance.Name:match("^RollStand_(%d+)$") else nil
+	return if number then tonumber(number) else nil
+end
+
 -- In SlotNumber order, which is the order they're bought in
 function Places.GetSlots(place: Folder): { Model }
 	local slots = {}

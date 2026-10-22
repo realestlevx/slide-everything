@@ -11,6 +11,12 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 local BuyUpgrade = ReplicatedStorage.Remotes.BuyUpgrade
 local BuyUpgradeResult = ReplicatedStorage.Remotes.BuyUpgradeResult
 
+-- The client holds its button for the whole cooldown; this only catches requests sent around it.
+-- A little short of the cooldown, since the client measures it on its own clock
+local COOLDOWN_SLACK = 0.2
+
+local lastBuys: { [Player]: { [string]: number } } = {} -- Player -> upgrade name -> when it was last bought
+
 local SignUpgradeService = {}
 
 local function getLevel(data: PlayerDataService.Data, name: string): number
@@ -41,7 +47,14 @@ local function onBuy(player: Player, place: any, name: any)
 	if not (data and place ~= nil and place == PlaceService.GetPlace(player)) then
 		return
 	end
-	if not (typeof(name) == "string" and SignUpgrades.Upgrades[name]) then
+	local upgrade = typeof(name) == "string" and SignUpgrades.Upgrades[name]
+	if not upgrade then
+		return
+	end
+	local buys = lastBuys[player] or {}
+	lastBuys[player] = buys
+	local now = os.clock()
+	if upgrade.Cooldown and now - (buys[name] or -math.huge) < upgrade.Cooldown - COOLDOWN_SLACK then
 		return
 	end
 
@@ -56,11 +69,14 @@ local function onBuy(player: Player, place: any, name: any)
 	end
 
 	PlayerDataService.AddMoney(player, -price)
+	buys[name] = now
 	data.UpgradeLevels[name] = level + 1
+	-- The result goes out before the level changes on the place, so the client knows a new roll
+	-- stand is its own purchase, and can shrink it to grow, before the stand reaches it
+	BuyUpgradeResult:FireClient(player, name, true, level + 1)
 	place:SetAttribute(`{name}Level`, level + 1)
 	-- Same as for slots: spending can leave a player with nothing who can't afford a roll
 	InventoryService.EnsureCanStart(player)
-	BuyUpgradeResult:FireClient(player, name, true)
 end
 
 function SignUpgradeService.Start()
@@ -79,6 +95,9 @@ function SignUpgradeService.Start()
 	end)
 
 	BuyUpgrade.OnServerEvent:Connect(onBuy)
+	Players.PlayerRemoving:Connect(function(player)
+		lastBuys[player] = nil
+	end)
 end
 
 return SignUpgradeService

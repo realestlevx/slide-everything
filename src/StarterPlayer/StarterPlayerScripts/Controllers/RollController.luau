@@ -9,6 +9,7 @@ local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 
 local FloatController = require(script.Parent.FloatController)
 local PromptController = require(script.Parent.PromptController)
@@ -17,7 +18,10 @@ local RollResult = ReplicatedStorage.Remotes.RollResult
 local BuyResult = ReplicatedStorage.Remotes.BuyResult
 local LocalPlayer = Players.LocalPlayer
 
-local STAND_ITEM_ATTRIBUTE = "StandItem" -- Set by the server on the place to the Id of what's on the stand
+-- Set by the server on the place as StandItem<number>, to the Id of what's on that stand
+local STAND_ITEM_ATTRIBUTE = "StandItem"
+local ROLL_SLOTS = "RollSlots" -- The sign upgrade for how many stands a roll fills
+local ROLL_PLACE_NAME = "Roll_Place"
 local RESULT_TIMEOUT = 5 -- Stop a spin whose result never comes (the server turned the roll down)
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
@@ -38,12 +42,17 @@ for _, item in Items do
 	table.insert(allItems, item)
 end
 
+-- One roll stand, as this player sees it
+type StandState = {
+	Preview: BasePart?, -- The owner's local item: spinning, then their copy of the result
+	Rolled: Items.Item?, -- What sits on the stand, offered by its buy prompt
+}
+
 local spinTokens: { [Folder]: number } = {} -- Bumped to stop a spin early
 local spinning: { [Folder]: boolean } = {}
-local results: { [Folder]: string } = {} -- The server's pick for the current spin
-local previews: { [Folder]: MeshPart } = {} -- The owner's local item: spinning, then their copy of the result
+local results: { [Folder]: { [string]: string } } = {} -- The server's picks for the current spin, by stand number as text
+local standStates: { [Folder]: { [number]: StandState } } = {}
 local rollPrompts: { [Folder]: ProximityPrompt } = {} -- Hidden while their spin plays
-local rolledItems: { [Folder]: Items.Item } = {} -- What sits on the stand, offered by the buy prompt
 local priceColors: { [TextLabel]: Color3 } = {} -- Each price label's own color, taken before it first flashes
 local revealTweens: { [Folder]: { Tween } } = {}
 local leverRestCFrames: { [BasePart]: CFrame } = {}
@@ -59,6 +68,30 @@ local function find(root: Instance, ...: string): any
 		current = current and current:FindFirstChild(name)
 	end
 	return current
+end
+
+local function findStand(place: Folder, number: number, ...: string): any
+	return find(place, Places.GetStandName(number), ...)
+end
+
+local function getState(place: Folder, number: number): StandState
+	local states = standStates[place]
+	if not states then
+		states = {}
+		standStates[place] = states
+	end
+	local state = states[number]
+	if not state then
+		state = {}
+		states[number] = state
+	end
+	return state
+end
+
+-- How many stands the owner's roll fills, from their Roll Slots level the server keeps on the place
+local function getStandCount(place: Folder): number
+	local level = place:GetAttribute(`{ROLL_SLOTS}Level`)
+	return SignUpgrades.GetValue(ROLL_SLOTS, if typeof(level) == "number" then level else 1)
 end
 
 local function pullLever(place: Folder)
@@ -91,17 +124,17 @@ local function pullLever(place: Folder)
 	angle:Destroy()
 end
 
-local function clearPreview(place: Folder)
-	local preview = previews[place]
-	if preview then
-		preview:Destroy()
-		previews[place] = nil
+local function clearPreview(place: Folder, number: number)
+	local state = getState(place, number)
+	if state.Preview then
+		state.Preview:Destroy()
+		state.Preview = nil
 	end
 end
 
 -- Every emitter in Roll_Place's attachment runs while the spin plays (locally, so only the owner sees it)
-local function setRollingParticles(place: Folder, enabled: boolean)
-	local attachment = find(place, "RollStand_1", "Roll_Place", "ParticleEmmiterAttachment")
+local function setRollingParticles(place: Folder, number: number, enabled: boolean)
+	local attachment = findStand(place, number, ROLL_PLACE_NAME, "ParticleEmmiterAttachment")
 	if not attachment then
 		return
 	end
@@ -122,8 +155,8 @@ local function playSound(...: string) -- Path under SoundService.SFX
 end
 
 -- One burst from every emitter in Roll_Place's Finish attachment, sized by its EmitCount attribute
-local function burstFinishParticles(place: Folder)
-	local attachment = find(place, "RollStand_1", "Roll_Place", "Finish")
+local function burstFinishParticles(place: Folder, number: number)
+	local attachment = findStand(place, number, ROLL_PLACE_NAME, "Finish")
 	if not attachment then
 		return
 	end
@@ -162,17 +195,17 @@ local function restoreCamera()
 end
 
 -- Only up once a roll has landed: hidden on an empty stand and while the items spin
-local function getBuyPrompt(place: Folder): ProximityPrompt?
-	return find(place, "RollStand_1", "Roll_Place", "ProximityPrompt")
+local function getBuyPrompt(place: Folder, number: number): ProximityPrompt?
+	return findStand(place, number, ROLL_PLACE_NAME, "ProximityPrompt")
 end
 
 -- The text is set while the prompt is still hidden, since the prompt UI only reads it when shown
-local function updateBuyPrompt(place: Folder)
-	local prompt = getBuyPrompt(place)
+local function updateBuyPrompt(place: Folder, number: number)
+	local prompt = getBuyPrompt(place, number)
 	if not prompt then
 		return
 	end
-	local item = rolledItems[place]
+	local item = getState(place, number).Rolled
 	if item then
 		-- "Buy" keeps the prompt's own color; only the name gets the rarity's gradient
 		prompt.ActionText = `Buy {item.Name}`
@@ -182,16 +215,16 @@ local function updateBuyPrompt(place: Folder)
 	PromptController.SetHidden(place, prompt, item == nil)
 end
 
-local function setRolledItem(place: Folder, item: Items.Item?)
-	rolledItems[place] = item
-	updateBuyPrompt(place)
+local function setRolledItem(place: Folder, number: number, item: Items.Item?)
+	getState(place, number).Rolled = item
+	updateBuyPrompt(place, number)
 end
 
--- Too expensive: the price on the stats billboard flashes red and fades back to its own color
-local function showBuyError(place: Folder)
+-- Too expensive: the price on the stand's stats billboard flashes red and fades back to its own color
+local function showBuyError(place: Folder, number: number)
 	playSound("Error")
 
-	local price = find(place, "RollStand_1", "Roll_Place", "Stuff_StatsDisplay", "Price") :: TextLabel?
+	local price = findStand(place, number, ROLL_PLACE_NAME, "Stuff_StatsDisplay", "Price") :: TextLabel?
 	if not price then
 		return
 	end
@@ -202,14 +235,14 @@ local function showBuyError(place: Folder)
 	TweenService:Create(price, PRICE_FLASH, { TextColor3 = color }):Play()
 end
 
-local function onBought(place: Folder)
+local function onBought(place: Folder, number: number)
 	playSound("Buy")
-	clearPreview(place)
-	local stand = find(place, "RollStand_1")
+	clearPreview(place, number)
+	local stand = findStand(place, number)
 	if stand then
 		Rolling.ClearStand(stand)
 	end
-	setRolledItem(place, nil)
+	setRolledItem(place, number, nil)
 end
 
 local function showRollPrompt(place: Folder)
@@ -221,8 +254,8 @@ local function showRollPrompt(place: Folder)
 end
 
 -- Inside and its light only change color on the owner's screen; everyone else sees the stand's own color
-local function getGlowParts(place: Folder): { Instance }
-	local inside = find(place, "RollStand_1", "Inside")
+local function getGlowParts(place: Folder, number: number): { Instance }
+	local inside = findStand(place, number, "Inside")
 	local light = inside and inside:FindFirstChild("SurfaceLight")
 	return { inside, light }
 end
@@ -234,92 +267,107 @@ local function cancelSpin(place: Folder)
 	end
 	spinTokens[place] = (spinTokens[place] or 0) + 1
 	spinning[place] = nil
-	clearPreview(place)
-	setRollingParticles(place, false)
+	for number in standStates[place] or {} do
+		clearPreview(place, number)
+		setRollingParticles(place, number, false)
+		setRolledItem(place, number, nil)
+	end
 	showRollPrompt(place)
-	setRolledItem(place, nil)
 end
 
-local function showPreview(place: Folder, item: Items.Item)
-	local stand = find(place, "RollStand_1")
-	local rollPlace = find(place, "RollStand_1", "Roll_Place")
+local function showPreview(place: Folder, number: number, item: Items.Item)
+	local stand = findStand(place, number)
+	local rollPlace = stand and stand:FindFirstChild(ROLL_PLACE_NAME)
 	if not rollPlace then
 		return
 	end
 
-	clearPreview(place)
+	clearPreview(place, number)
 	local preview = Rolling.CreateDisplay(item, rollPlace)
 	preview.Name = "RollPreview"
 	Rolling.AddHighlight(preview, Rolling.ROLLING_HIGHLIGHT)
 
 	ItemModel.SetScale(preview, 0.01)
 	preview.Parent = stand
-	previews[place] = preview
+	getState(place, number).Preview = preview
 	FloatController.Float(preview)
 	ItemModel.TweenScale(preview, POP, 1)
 end
 
--- The owner's reveal runs on their own timing, the moment their last item lands. Their preview stays
--- as their copy of the result; the server's copy is for everyone else
-local function reveal(place: Folder, item: Items.Item)
+-- The owner's reveal runs on their own timing, the moment their last items land. Their previews stay
+-- as their copies of the results; the server's copies are for everyone else
+local function reveal(place: Folder, picks: { [number]: Items.Item })
 	spinning[place] = nil
-	setRollingParticles(place, false)
-	burstFinishParticles(place)
 	playSound("Rolling", "Reveal")
 	restoreCamera()
 	showRollPrompt(place)
-	setRolledItem(place, item)
 
 	local tweens = {}
-	local preview = previews[place]
-	if preview then
-		for _, highlight in Rolling.GetHighlights(preview) do
-			table.insert(tweens, TweenService:Create(highlight, OUTCOME_FADE, Rolling.GetOutcomeHighlight(item)))
-		end
-	end
+	for number, item in picks do
+		setRollingParticles(place, number, false)
+		burstFinishParticles(place, number)
+		setRolledItem(place, number, item)
 
-	local rarityColor = Rarities[item.Rarity].Color
-	for _, glow in getGlowParts(place) do
-		table.insert(tweens, TweenService:Create(glow, OUTCOME_FADE, { Color = rarityColor }))
+		local preview = getState(place, number).Preview
+		if preview then
+			for _, highlight in Rolling.GetHighlights(preview) do
+				table.insert(tweens, TweenService:Create(highlight, OUTCOME_FADE, Rolling.GetOutcomeHighlight(item)))
+			end
+		end
+
+		local rarityColor = Rarities[item.Rarity].Color
+		for _, glow in getGlowParts(place, number) do
+			table.insert(tweens, TweenService:Create(glow, OUTCOME_FADE, { Color = rarityColor }))
+		end
+
+		local billboard = findStand(place, number, ROLL_PLACE_NAME, "Stuff_StatsDisplay")
+		if billboard then
+			Rolling.ShowStats(billboard, item)
+		end
 	end
 
 	for _, tween in tweens do
 		tween:Play()
 	end
 	revealTweens[place] = tweens
-
-	local billboard = find(place, "RollStand_1", "Roll_Place", "Stuff_StatsDisplay")
-	if billboard then
-		Rolling.ShowStats(billboard, item)
-	end
 end
 
--- The server's copy of what's on the stand is only kept by the owner when it wasn't rolled just now,
+-- The server's copy of what's on a stand is only kept by the owner when it wasn't rolled just now,
 -- so it gets the outline the owner's own copy would have had
-local function highlightServerCopy(place: Folder)
-	local display = find(place, "RollStand_1", "RolledItem")
-	local item = rolledItems[place]
-	if display and item and not previews[place] and #Rolling.GetHighlights(display) == 0 then
-		Rolling.AddHighlight(display, Rolling.GetOutcomeHighlight(item))
+local function highlightServerCopy(place: Folder, number: number)
+	local display = findStand(place, number, "RolledItem")
+	local state = getState(place, number)
+	if display and state.Rolled and not state.Preview and #Rolling.GetHighlights(display) == 0 then
+		Rolling.AddHighlight(display, Rolling.GetOutcomeHighlight(state.Rolled))
 	end
 end
 
 -- A roll put back from the owner's last visit lands without a spin here, so it gets the end of a
 -- reveal: the buy prompt, the outline and the rarity's glow
-local function showRestoredRoll(place: Folder)
-	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] or previews[place] then
+local function showRestoredRoll(place: Folder, number: number)
+	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] or getState(place, number).Preview then
 		return
 	end
-	local item = Items[place:GetAttribute(STAND_ITEM_ATTRIBUTE)]
+	local item = Items[place:GetAttribute(`{STAND_ITEM_ATTRIBUTE}{number}`)]
 	if not item then
 		return
 	end
 
-	setRolledItem(place, item)
-	highlightServerCopy(place)
+	setRolledItem(place, number, item)
+	highlightServerCopy(place, number)
 	local rarityColor = Rarities[item.Rarity].Color
-	for _, glow in getGlowParts(place) do
+	for _, glow in getGlowParts(place, number) do
 		glow.Color = rarityColor
+	end
+end
+
+-- Every stand with an item on it, as the server keeps them on the place
+local function showRestoredRolls(place: Folder)
+	for name in place:GetAttributes() do
+		local number = tonumber(name:match(`^{STAND_ITEM_ATTRIBUTE}(%d+)$`))
+		if number then
+			showRestoredRoll(place, number)
+		end
 	end
 end
 
@@ -331,8 +379,8 @@ local function randomFiller(previous: Items.Item?): Items.Item
 	return item
 end
 
--- The server's pick normally arrived long before the last item
-local function waitForResult(place: Folder, token: number): Items.Item?
+-- The server's picks normally arrived long before the last items
+local function waitForResult(place: Folder, token: number): { [number]: Items.Item }?
 	local deadline = os.clock() + RESULT_TIMEOUT
 	while not results[place] and spinTokens[place] == token and os.clock() < deadline do
 		task.wait()
@@ -341,22 +389,31 @@ local function waitForResult(place: Folder, token: number): Items.Item?
 		return nil
 	end
 
-	local resultId = results[place]
-	if not resultId then
+	local pickIds = results[place]
+	if not pickIds then
 		cancelSpin(place)
 		return nil
 	end
-	return Items[resultId]
+	local picks = {}
+	for key, id in pickIds do
+		local number, item = tonumber(key), Items[id]
+		if number and item then
+			picks[number] = item
+		end
+	end
+	return picks
 end
 
-local function spin(place: Folder)
+local function spin(place: Folder, numbers: { number })
 	local token = (spinTokens[place] or 0) + 1
 	spinTokens[place] = token
 	spinning[place] = true
-	setRollingParticles(place, true)
+	for _, number in numbers do
+		setRollingParticles(place, number, true)
+	end
 
 	local startTime = os.clock()
-	local previous
+	local previous: { [number]: Items.Item } = {}
 	for step = 1, Rolling.SPIN_STEPS do
 		-- Quadratic ease-out: swaps start fast and slow down until the result
 		local progress = (step - 1) / (Rolling.SPIN_STEPS - 1)
@@ -370,16 +427,27 @@ local function spin(place: Folder)
 		end
 
 		if step == Rolling.SPIN_STEPS then
-			local result = waitForResult(place, token)
-			if result then
-				showPreview(place, result)
-				reveal(place, result)
+			local picks = waitForResult(place, token)
+			if picks then
+				for number, item in picks do
+					showPreview(place, number, item)
+				end
+				-- A stand the server didn't fill, if the stand count changed mid-spin, is left empty
+				for _, number in numbers do
+					if not picks[number] then
+						clearPreview(place, number)
+						setRollingParticles(place, number, false)
+					end
+				end
+				reveal(place, picks)
 			end
 			return
 		end
 
-		previous = randomFiller(previous)
-		showPreview(place, previous)
+		for _, number in numbers do
+			previous[number] = randomFiller(previous[number])
+			showPreview(place, number, previous[number])
+		end
 		playSound("Rolling", "Tick")
 	end
 end
@@ -393,24 +461,54 @@ local function startRoll(place: Folder, prompt: ProximityPrompt)
 
 	rollPrompts[place] = prompt
 	PromptController.SetHidden(place, prompt, true)
-	setRolledItem(place, nil)
 	results[place] = nil
 	-- A fade still running from the last reveal would paint over the black
 	for _, tween in revealTweens[place] or {} do
 		tween:Cancel()
 	end
 	revealTweens[place] = nil
-	clearPreview(place)
-	local stand = find(place, "RollStand_1")
-	if stand then
-		Rolling.ClearStand(stand)
-	end
-	for _, glow in getGlowParts(place) do
-		glow.Color = Rolling.ROLLING_COLOR
+
+	local numbers = {}
+	for number = 1, getStandCount(place) do
+		table.insert(numbers, number)
+		setRolledItem(place, number, nil)
+		clearPreview(place, number)
+		local stand = findStand(place, number)
+		if stand then
+			Rolling.ClearStand(stand)
+		end
+		for _, glow in getGlowParts(place, number) do
+			glow.Color = Rolling.ROLLING_COLOR
+		end
 	end
 	zoomCamera()
 	task.spawn(pullLever, place)
-	task.spawn(spin, place)
+	task.spawn(spin, place, numbers)
+end
+
+-- A stand bought or streamed back in brings a fresh prompt that doesn't know it was hidden, and the
+-- server's copy of its item
+local function onDescendantAdded(place: Folder, descendant: Instance)
+	if descendant:IsA("ProximityPrompt") then
+		local rollPlace = descendant.Parent
+		local stand = rollPlace and rollPlace.Name == ROLL_PLACE_NAME and rollPlace.Parent
+		local number = stand and Places.GetStandNumber(stand)
+		if number then
+			updateBuyPrompt(place, number)
+		end
+	elseif descendant.Name == "RolledItem" then
+		local number = descendant.Parent and Places.GetStandNumber(descendant.Parent)
+		if not number then
+			return
+		end
+		-- The owner already shows their own copy, so the server's would just sit on top of it
+		if getState(place, number).Preview then
+			descendant:Destroy()
+		else
+			FloatController.Float(descendant)
+			highlightServerCopy(place, number)
+		end
+	end
 end
 
 function RollController.Start()
@@ -427,27 +525,25 @@ function RollController.Start()
 		end
 	end)
 
-	RollResult.OnClientEvent:Connect(function(place: Folder, resultId: string)
-		results[place] = resultId
+	RollResult.OnClientEvent:Connect(function(place: Folder, pickIds: { [string]: string })
+		results[place] = pickIds
 	end)
 
-	BuyResult.OnClientEvent:Connect(function(place: Folder, bought: boolean)
+	BuyResult.OnClientEvent:Connect(function(place: Folder, number: number, bought: boolean)
 		if bought then
-			onBought(place)
+			onBought(place, number)
 		else
-			showBuyError(place)
+			showBuyError(place, number)
 		end
 	end)
 
 	for _, place in places do
-		updateBuyPrompt(place)
-		place.DescendantAdded:Connect(function(descendant)
-			-- Streamed back in as a fresh prompt that doesn't know it was hidden
-			if descendant == getBuyPrompt(place) then
-				updateBuyPrompt(place)
+		for _, child in place:GetChildren() do
+			local number = Places.GetStandNumber(child)
+			if number then
+				updateBuyPrompt(place, number)
 			end
-		end)
-
+		end
 		for _, descendant in place:GetDescendants() do
 			if descendant.Name == "RolledItem" then
 				FloatController.Float(descendant)
@@ -455,25 +551,19 @@ function RollController.Start()
 		end
 
 		place.DescendantAdded:Connect(function(descendant)
-			if descendant.Name ~= "RolledItem" then
-				return
-			end
-			-- The owner already shows their own copy, so the server's would just sit on top of it
-			if previews[place] then
-				descendant:Destroy()
-			else
-				FloatController.Float(descendant)
-				highlightServerCopy(place)
-			end
+			onDescendantAdded(place, descendant)
 		end)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
 			cancelSpin(place)
-			showRestoredRoll(place)
+			showRestoredRolls(place)
 		end)
-		place:GetAttributeChangedSignal(STAND_ITEM_ATTRIBUTE):Connect(function()
-			showRestoredRoll(place)
+		place.AttributeChanged:Connect(function(name)
+			local number = tonumber(name:match(`^{STAND_ITEM_ATTRIBUTE}(%d+)$`))
+			if number then
+				showRestoredRoll(place, number)
+			end
 		end)
-		showRestoredRoll(place)
+		showRestoredRolls(place)
 	end
 end
 

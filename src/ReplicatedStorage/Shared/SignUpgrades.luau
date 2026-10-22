@@ -10,6 +10,7 @@ export type Upgrade = {
 	Frame: string, -- The panel on a sign (a Frame) that shows and sells it
 	Suffix: string, -- Shown after the value on the panel, like "1x > 2x"
 	Levels: { Level },
+	Cooldown: number?, -- Seconds after a click before the panel's button takes another, so it can't be spammed
 }
 
 -- Rounded to 3 significant digits, so the price the panel shows (like "$1.35K") is the exact price
@@ -59,8 +60,27 @@ local function getSpeedLevels(): { Level }
 	return levels
 end
 
+-- 1 stand, then one more each level up to 6, at the economy sheet's roll slot prices
+local ROLL_SLOT_PRICES = { 800, 10000, 250000, 2000000, 51000000 } -- What stands 2 to 6 cost
+
+local function getRollSlotLevels(): { Level }
+	local levels: { Level } = { { Value = 1 } }
+	for index, price in ROLL_SLOT_PRICES do
+		table.insert(levels, { Value = index + 1, Price = price })
+	end
+	return levels
+end
+
 local SignUpgrades = {
 	Upgrades = {
+		-- How many roll stands a pull of the lever fills; see RollService. Each new stand is shown off
+		-- by StandUnlockController, which takes about as long as the cooldown
+		RollSlots = {
+			Frame = "Rolls_Frame",
+			Suffix = "",
+			Levels = getRollSlotLevels(),
+			Cooldown = 1.5,
+		},
 		-- Multiplies every item's roll chance; see Rolling.Pick
 		Luck = {
 			Frame = "Luck_Frame",
