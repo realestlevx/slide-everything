@@ -50,26 +50,38 @@ table.sort(rollable, function(a, b)
 	return if shares[a] ~= shares[b] then shares[a] < shares[b] else a.Id < b.Id
 end)
 
--- The item's share with luck: multiplied by the luck to the item's LuckPower (see Items)
-local function getLuckyWeight(item: Items.Item, luck: number): number
-	return shares[item] * luck ^ (item.LuckPower or 1)
+-- Each 1x of luck makes every item this many times likelier than the luck below it, so 100x makes
+-- them about 1M times likelier. With all of the economy sheet's items, most rolls are Uncommons at
+-- 30x, Rares at 50x, Epics at 60x, Legendaries at 80x and Mythics at 100x, where a Godly is 1 in 230
+local LUCK_GROWTH = 1.15
+
+-- How many times likelier the luck makes every item
+local function getBoost(luck: number?): number
+	return LUCK_GROWTH ^ (math.max(luck or 1, 1) - 1)
 end
 
--- Every item's share is changed by the luck as its LuckPower says, then all of them are scaled back
--- to add up to 1 and the roll is matched against them. At 1x luck the odds are exactly what the
--- stands show. Luck that boosts the rare items and shrinks the Commons takes both ways at once: at 9x,
--- a Common at -1 is 9x less likely next to an item at 1, so the rare items gain more than 9x
+-- How strongly the item pulls a roll at this luck: its share times the luck's boost, until that's
+-- more than certain. Past that, it's divided by as much as it went over, so the items too common for
+-- the luck fade out as the rarer ones come in. Nothing is ever ruled out, and the items still
+-- coming in keep their order: a rarer one is always less likely
+local function getLuckyWeight(item: Items.Item, boost: number): number
+	local chance = shares[item] * boost
+	return if chance <= 1 then chance else 1 / chance
+end
+
+-- The roll is matched against every item's weight with luck, scaled back to add up to 1. At 1x luck
+-- the odds are exactly what the stands show
 function Rolling.Pick(rng: Random, luck: number?): Items.Item
-	local multiplier = math.max(luck or 1, 1)
+	local boost = getBoost(luck)
 	local total = 0
 	for _, item in rollable do
-		total += getLuckyWeight(item, multiplier)
+		total += getLuckyWeight(item, boost)
 	end
 
 	local roll = rng:NextNumber() * total
 	local reach = 0
 	for _, item in rollable do
-		reach += getLuckyWeight(item, multiplier)
+		reach += getLuckyWeight(item, boost)
 		if roll < reach then
 			return item
 		end
@@ -79,14 +91,34 @@ function Rolling.Pick(rng: Random, luck: number?): Items.Item
 	return rollable[#rollable]
 end
 
--- What the cheapest item a roll can land on costs. Luck makes items rarer or likelier, but never
--- rules one out
-function Rolling.GetCheapestPrice(): number
-	local cheapest = math.huge
+-- Every item that can roll, cheapest first
+local byPrice = table.clone(rollable)
+table.sort(byPrice, function(a, b)
+	return a.Price < b.Price
+end)
+
+-- Rolls at this luck land on something this cheap at least this often, so a player who can pay it
+-- won't be left waiting for one they can buy
+local AFFORDABLE_SHARE = 0.1
+
+-- What a player needs to buy something a roll at this luck lands on. Luck never rules out the
+-- cheapest items, but it makes them too unlikely to wait for, so this is the cheapest price that
+-- AFFORDABLE_SHARE of rolls cost no more than
+function Rolling.GetCheapestPrice(luck: number?): number
+	local boost = getBoost(luck)
+	local total = 0
 	for _, item in rollable do
-		cheapest = math.min(cheapest, item.Price)
+		total += getLuckyWeight(item, boost)
 	end
-	return cheapest
+
+	local reach = 0
+	for _, item in byPrice do
+		reach += getLuckyWeight(item, boost) / total
+		if reach >= AFFORDABLE_SHARE then
+			return item.Price
+		end
+	end
+	return byPrice[#byPrice].Price
 end
 
 -- The item's odds without luck, as shown on the stand. Infinite for items that never roll

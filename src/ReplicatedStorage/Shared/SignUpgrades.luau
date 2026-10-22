@@ -81,7 +81,7 @@ local SignUpgrades = {
 			Levels = getRollSlotLevels(),
 			Cooldown = 1.5,
 		},
-		-- Multiplies every item's roll chance; see Rolling.Pick
+		-- Makes every item likelier to roll, fading out the ones too common for it; see Rolling.Pick
 		Luck = {
 			Frame = "Luck_Frame",
 			Suffix = "x",
