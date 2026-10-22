@@ -44,6 +44,11 @@ local SIDE_GRIP = 8
 local PACK_RADIUS = 3 -- Studs either side of the middle where nothing pulls
 local PACK_PULL = 2 -- Studs per second of pull for every stud further out than that
 local MAX_PACK_PULL = 8 -- Studs per second
+-- Items can't be steered up ground that slopes across the slide, like the funnel's sides, and nothing
+-- holds them up there, so they slide back down. How far the ground's normal leans across, as the
+-- sine of its tilt: up to FLAT_TILT it steers as normal, and from STEEP_TILT not uphill at all
+local FLAT_TILT = 0.15
+local STEEP_TILT = 0.35
 -- Items stay the way up they were dropped instead of tumbling, tilted to lie along the ground under them
 local TILT_RESPONSIVENESS = 25
 local GROUND_PROBE = 8 -- Studs below an item that the ground it lies along is looked for
@@ -316,6 +321,7 @@ local function followItems(current: Drop, dt: number)
 		if forward.Magnitude > current.SlideSpeed then
 			forward = forward.Unit * current.SlideSpeed
 		end
+		local ground = workspace:Raycast(part.Position, -Vector3.yAxis * GROUND_PROBE, current.WorldRay)
 		local zone = current.SteerZone
 		if not dropped.Steerable and (not zone or zone.CFrame:PointToObjectSpace(part.Position).Y < 0) then
 			dropped.Steerable = true
@@ -324,12 +330,23 @@ local function followItems(current: Drop, dt: number)
 			local apart = (center - part.Position):Dot(right)
 			local outside = math.max(math.abs(apart) - PACK_RADIUS, 0) * math.sign(apart)
 			local pull = math.clamp(outside * PACK_PULL, -MAX_PACK_PULL, MAX_PACK_PULL)
-			sideways += (steer * STEER_SPEED + pull - sideways) * grip
+			local target = steer * STEER_SPEED + pull
+			if ground then
+				local tilt = ground.Normal:Dot(right) -- Above 0 where the ground falls away to the right
+				local steepness = math.clamp((math.abs(tilt) - FLAT_TILT) / (STEEP_TILT - FLAT_TILT), 0, 1)
+				local downhill = math.sign(tilt)
+				if target * downhill < 0 then
+					target *= 1 - steepness
+				end
+				if sideways * downhill > target * downhill then
+					target += (sideways - target) * steepness
+				end
+			end
+			sideways += (target - sideways) * grip
 		end
 		itemVelocity = forward + right * sideways + Vector3.yAxis * itemVelocity.Y
 		part.AssemblyLinearVelocity = itemVelocity
 
-		local ground = workspace:Raycast(part.Position, -Vector3.yAxis * GROUND_PROBE, current.WorldRay)
 		dropped.Align.CFrame = if ground
 			then CFrame.fromRotationBetweenVectors(Vector3.yAxis, ground.Normal) * dropped.Rotation
 			else dropped.Rotation
