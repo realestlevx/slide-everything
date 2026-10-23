@@ -2,17 +2,26 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
+local Places = require(ReplicatedStorage.Shared.Places)
 
 -- The multiplier walls across the slide. Each one's text shows its Multiplier attribute, so it can't
 -- say something different from what the wall pays. They're tall and wide enough to fill the view as
--- the camera nears them, so they fade out as it closes in, text and all, and back in once it's gone by
+-- the camera nears them, so they fade out as it closes in, text and all, and back in once it's gone by.
+-- Walls with SideToSide on glide across the slide (see Drops.GetWallSide). Only this client moves
+-- them; the server's copy stays where it was built
 local VALUE_LABEL_NAME = "Value" -- The TextLabel on a wall that shows its multiplier
--- Studs from the camera to the nearest point of a wall
-local FADE_START = 100 -- Where it starts fading
-local FADE_END = 50 -- Where it's gone
+-- The floor in each place that the way down the slide is measured from (see Drops.GetSlideLine)
+local DROP_FLOOR_NAME = "DropPart"
+-- Studs from the camera to the nearest point of a wall. The drop camera trails the items by about 30
+-- studs, so a wall in their way only starts fading once they've reached it: the player sees them go
+-- through it, or miss it, before it fades for the camera to pass through
+local FADE_START = 25 -- Where it starts fading
+local FADE_END = 8 -- Where it's gone
 local STEP_NAME = "MultiplierWallFade"
 
 type Wall = {
+	Home: CFrame, -- Where it was built
+	Side: number, -- Studs right of there that it's been moved to
 	Fade: number, -- 0 as it was built; 1 gone
 	-- Each of its labels' and strokes' own transparency, which they fade from
 	Labels: { [TextLabel]: number },
@@ -21,8 +30,27 @@ type Wall = {
 }
 
 local walls: { [BasePart]: Wall } = {} -- Every multiplier wall loaded now; they stream in and out
+local slideRight: Vector3? = nil -- To the right looking down the slide, once a place's floor has loaded
 
 local MultiplierWallController = {}
+
+-- Every place drops onto the same slide, so any place's floor gives the way down it. Down -X until
+-- one has loaded
+local function getRight(): Vector3
+	if slideRight then
+		return slideRight
+	end
+	for _, place in Places.GetAll() do
+		local floor = place:FindFirstChild(DROP_FLOOR_NAME)
+		if floor and floor:IsA("BasePart") then
+			local _, direction = Drops.GetSlideLine(floor)
+			local right = direction:Cross(Vector3.yAxis)
+			slideRight = right
+			return right
+		end
+	end
+	return -Vector3.xAxis:Cross(Vector3.yAxis)
+end
 
 local function fadeFrom(transparency: number, fade: number): number
 	return transparency + (1 - transparency) * fade
@@ -77,6 +105,8 @@ local function track(instance: Instance)
 	end
 	local part = instance :: BasePart
 	local wall: Wall = {
+		Home = part.CFrame,
+		Side = 0,
 		Fade = 0,
 		Labels = {},
 		Strokes = {},
@@ -110,13 +140,25 @@ local function untrack(instance: Instance)
 	for _, connection in wall.Connections do
 		connection:Disconnect()
 	end
+	local part = instance :: BasePart
+	if wall.Side ~= 0 then
+		part.CFrame = wall.Home
+	end
 	wall.Fade = 0
-	applyFade(instance :: BasePart, wall)
+	applyFade(part, wall)
 end
 
 local function onRenderStep()
 	local from = workspace.CurrentCamera.CFrame.Position
+	local time = workspace:GetServerTimeNow()
+	local right = getRight()
 	for part, wall in walls do
+		local side = Drops.GetWallSide(part, time)
+		if side ~= wall.Side then
+			wall.Side = side
+			part.CFrame = wall.Home + right * side
+		end
+
 		local fade = getFade(part, from)
 		if fade ~= wall.Fade then
 			wall.Fade = fade
@@ -131,7 +173,7 @@ function MultiplierWallController.Start()
 	end
 	workspace.DescendantAdded:Connect(track)
 	workspace.DescendantRemoving:Connect(untrack)
-	-- After the drop camera has moved for the frame
+	-- After the drop camera has moved for the frame, so walls fade by where it is now
 	RunService:BindToRenderStep(STEP_NAME, Enum.RenderPriority.Camera.Value + 2, onRenderStep)
 end
 

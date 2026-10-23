@@ -53,14 +53,20 @@ local MAX_PACK_PULL = 8 -- Studs per second
 -- sine of its tilt: up to FLAT_TILT it steers as normal, and from STEEP_TILT not uphill at all
 local FLAT_TILT = 0.15
 local STEEP_TILT = 0.35
--- Items behind the front one, like those dropped from a higher floor that land later, slide faster
--- until they've caught up with it
-local CATCH_UP_PULL = 2 -- Studs per second faster for every stud further back than PACK_RADIUS
-local MAX_CATCH_UP = 0.5 -- Share of the slide speed
+-- Items behind the front one, like those dropped from a higher floor that land later or ones held up
+-- by something they hit, slide faster until they've caught up with it. Gently, so they drift back
+-- into the pack instead of shooting forward
+local CATCH_UP_PULL = 1 -- Studs per second faster for every stud further back than PACK_RADIUS
+local MAX_CATCH_UP = 0.3 -- Share of the slide speed
+local CATCH_UP_EASE = 2 -- How quickly an item takes up a faster speed; higher is sooner
 -- Items stay the way up they were dropped instead of tumbling, tilted to lie along the ground under them
 local TILT_RESPONSIVENESS = 25
-local GROUND_PROBE = 8 -- Studs below an item that the ground it lies along is looked for
-local STOPPED_SPEED = 2 -- Studs per second. An item slower than this for STOP_TIME has come to rest
+-- Studs below an item at its own size that the ground it lies along is looked for. An upgraded item
+-- looks as much further as it's bigger, since its middle is that much higher
+local GROUND_PROBE = 8
+-- Studs per second. An item going down the slide slower than this, and not falling, for STOP_TIME
+-- has come to rest. Being steered from side to side against whatever stopped it doesn't count
+local STOPPED_SPEED = 2
 local STOP_TIME = 1
 -- Studs below the last ground it was over (where it was dropped from, until it's over some); an item
 -- lower than this went off the slide. The slide itself goes further down than this
@@ -91,6 +97,10 @@ local BACK_SPEED = 12 -- Studs per second
 local RETURNED_DISTANCE = 0.05 -- Studs. Once back this close to where it was, the camera is handed back
 local CAMERA_STEP_NAME = "DropCamera"
 local STREAM_INTERVAL = 0.5 -- Seconds between asks for the slide around the items to be loaded
+-- Physics only runs within some distance of the character, so items far down the slide froze in
+-- place while it stood at the base. Through the drop it's held this far over the pack's middle
+-- instead, above the camera's view and anything the items could reach
+local CHARACTER_HEIGHT = 150 -- Studs
 
 type DroppedItem = {
 	Item: Items.Item,
@@ -100,13 +110,18 @@ type DroppedItem = {
 	-- drops, and fixed once it's done
 	Reached: number,
 	Pay: number,
-	Multiplier: number, -- Of the last wall it passed
-	Passed: number, -- Walls it's passed that multiply
+	-- The multiplier walls it's touched, nearest first. Only these multiply what it makes, so a wall
+	-- that's off to one side as it goes by doesn't count
+	Gates: { Drops.Wall },
+	TouchedWalls: { [BasePart]: boolean },
+	Multiplier: number, -- Of the last wall it went through
+	Passed: number, -- Walls it's gone through that multiply
 	Part: BasePart, -- The item's mesh, which the rest of it is welded to
 	Parts: { BasePart },
 	Rotation: CFrame, -- The way up it was dropped, which it keeps
 	Align: AlignOrientation, -- Holds it that way up, tilted along the ground
-	StillFor: number, -- Seconds it has been slower than STOPPED_SPEED
+	StillFor: number, -- Seconds it has been at rest (see STOPPED_SPEED)
+	Probe: number, -- Studs below it that the ground is looked for (see GROUND_PROBE)
 	GroundY: number, -- Height of the last ground it was over, which FALL_LIMIT is measured from
 	Steerable: boolean, -- Has reached the slide
 	Done: boolean, -- Its run is over and it's gone to the collect pad; the camera stops following it
@@ -125,10 +140,6 @@ type Drop = {
 	StartY: number,
 	Start: Vector3, -- Where the way down the slide is measured from
 	Direction: Vector3, -- Which way the slide runs, across the ground
-	-- Every multiplier wall down the slide seen so far, nearest first. They stream in as the items
-	-- near them, and stay here once seen, so they still count for items further back
-	Walls: { Drops.Wall },
-	SeenWalls: { [BasePart]: boolean },
 	Ending: boolean,
 	Speed: number, -- The owner's Sliding Speed upgrade, which multiplies the pay
 	SlideSpeed: number, -- Studs per second items are held to down the slide
@@ -142,7 +153,6 @@ type Drop = {
 
 local drop: Drop? = nil
 local lastDropAt = -math.huge
-local walls: { [BasePart]: boolean } = {} -- Every multiplier wall loaded now; they stream in and out
 
 -- The camera eases from where it is and looks toward its goals every frame, so it never jumps
 local cameraHeld = false -- Following the items, or still gliding back afterwards
@@ -153,6 +163,8 @@ local goalLookAt = Vector3.zero
 local returnCFrame = CFrame.identity -- Where the camera was before the drop
 local returnLookAt = Vector3.zero
 local lastStreamRequest = 0
+local frozenRoot: BasePart? = nil -- The character's, while it's held through a drop
+local frozenAt = CFrame.identity -- Where it stood as the drop started
 
 local DropController = {}
 
@@ -165,21 +177,13 @@ local function flatten(vector: Vector3): Vector3
 	return Vector3.new(vector.X, 0, vector.Z)
 end
 
-local function addNewWalls(current: Drop)
-	for wall in walls do
-		if not current.SeenWalls[wall] then
-			current.SeenWalls[wall] = true
-			Drops.AddWall(current.Walls, wall, current.Start, current.Direction)
-		end
-	end
-end
-
 -- How far the item's got, and what that's earned it, counting each stud at the multiplier of the
--- last wall before it. The server works out the real pay the same way, from how far it got
+-- last wall it went through before it. The server works out the real pay the same way, from how far
+-- it got and the walls it touched
 local function measure(current: Drop, dropped: DroppedItem)
 	local along = (dropped.Part.Position - current.Start):Dot(current.Direction)
 	dropped.Reached = math.max(dropped.Reached, along)
-	local paidDistance, multiplier, passed = Drops.Measure(current.Walls, dropped.Reached)
+	local paidDistance, multiplier, passed = Drops.Measure(dropped.Gates, dropped.Reached)
 	dropped.Multiplier, dropped.Passed = multiplier, passed
 	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, current.Speed)
 end
@@ -203,14 +207,19 @@ local function showStats(current: Drop)
 end
 
 -- The item's run is over: it fades off the slide for the pile on the collect pad, and the server
--- hears how far it got, which it pays out
+-- hears how far it got and which walls it touched, by how far down the slide they are, which it pays
+-- out. A wall far behind may have streamed out by now, so it isn't sent itself
 local function finishItem(current: Drop, dropped: DroppedItem)
 	if dropped.Done then
 		return
 	end
 	measure(current, dropped)
 	dropped.Done = true
-	DropResult:FireServer(dropped.SlotKey, dropped.Reached)
+	local gates = {}
+	for _, gate in dropped.Gates do
+		table.insert(gates, gate.Along)
+	end
+	DropResult:FireServer(dropped.SlotKey, dropped.Reached, gates)
 	CollectController.AddToPile(current.Place, dropped.Item)
 
 	for _, part in dropped.Parts do
@@ -222,7 +231,8 @@ end
 -- A physical copy of the item where its display floats in the slot, as big as it shows there at its
 -- level. Made on this client only, so the server doesn't simulate anyone's drop
 local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey: string, cframe: CFrame)
-	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS, Upgrades.GetSize(level))
+	local size = Upgrades.GetSize(level)
+	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS, size)
 	local attachment = Instance.new("Attachment")
 	attachment.Parent = copy
 	local align = Instance.new("AlignOrientation")
@@ -239,6 +249,8 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		SlotKey = slotKey,
 		Reached = 0,
 		Pay = 0,
+		Gates = {},
+		TouchedWalls = {},
 		Multiplier = 1,
 		Passed = 0,
 		Part = copy,
@@ -246,20 +258,49 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		Rotation = cframe.Rotation,
 		Align = align,
 		StillFor = 0,
+		Probe = GROUND_PROBE * size,
 		GroundY = current.StartY,
 		Steerable = false,
 		Done = false,
 	}
+	-- Walls are touched where this client shows them, as they glide across the slide
+	for _, part in parts do
+		part.Touched:Connect(function(hit)
+			if not dropped.Done and not dropped.TouchedWalls[hit] and Drops.IsWall(hit) then
+				dropped.TouchedWalls[hit] = true
+				Drops.AddWall(dropped.Gates, hit, current.Start, current.Direction)
+			end
+		end)
+	end
 	copy.Parent = workspace
 	table.insert(current.Items, dropped)
 end
 
--- The character stands still through the drop, so the steering keys don't walk it off
+-- The character is anchored through the drop, so the steering keys don't walk it off. Anchored on
+-- this client only, it can follow the pack here while the server, and everyone else, still sees it
+-- standing where it was. It's back there before it's let go. Up over the pack there's no floor under
+-- it, and its animations play for everyone, so it isn't let fall: it would show falling at its base
 local function setFrozen(frozen: boolean)
-	local character = LocalPlayer.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if root and root:IsA("BasePart") then
-		root.Anchored = frozen
+	if frozen then
+		local character = LocalPlayer.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if root and root:IsA("BasePart") then
+			frozenRoot, frozenAt = root, root.CFrame
+			root.Anchored = true
+			if humanoid then
+				humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+			end
+		end
+	elseif frozenRoot then
+		local character = frozenRoot.Parent
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		frozenRoot.CFrame = frozenAt
+		frozenRoot.Anchored = false
+		frozenRoot = nil
+		if humanoid then
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+		end
 	end
 end
 
@@ -295,7 +336,6 @@ end
 -- lie along the ground and, once on the slide, go where they're steered as a pack. The camera aims at
 -- them, and once none are left, the drop ends after a moment
 local function followItems(current: Drop, dt: number)
-	addNewWalls(current)
 	local timeUp = os.clock() >= current.EndsAt
 	local active: { DroppedItem } = {}
 	for _, dropped in current.Items do
@@ -307,7 +347,8 @@ local function followItems(current: Drop, dt: number)
 			finishItem(current, dropped)
 			continue
 		end
-		local still = part.AssemblyLinearVelocity.Magnitude < STOPPED_SPEED
+		local velocity = part.AssemblyLinearVelocity
+		local still = velocity:Dot(current.Direction) < STOPPED_SPEED and math.abs(velocity.Y) < STOPPED_SPEED
 		dropped.StillFor = if still then dropped.StillFor + dt else 0
 		if dropped.StillFor >= STOP_TIME then
 			finishItem(current, dropped)
@@ -335,7 +376,7 @@ local function followItems(current: Drop, dt: number)
 		local position = dropped.Part.Position
 		center += position
 		if not dropped.Steerable then
-			local ground = workspace:Raycast(position, -Vector3.yAxis * GROUND_PROBE, current.WorldRay)
+			local ground = workspace:Raycast(position, -Vector3.yAxis * dropped.Probe, current.WorldRay)
 			dropped.Steerable = ground ~= nil and ground.Instance.Name == SLIDE_NAME
 		end
 		if dropped.Steerable then
@@ -343,12 +384,16 @@ local function followItems(current: Drop, dt: number)
 		end
 	end
 	center /= #active
+	if frozenRoot then
+		frozenRoot.CFrame = frozenAt.Rotation + center + Vector3.yAxis * CHARACTER_HEIGHT
+	end
 
 	local steer = HudController.GetSteer()
 	local right = current.Direction:Cross(Vector3.yAxis)
 	local sideScale = current.SlideSpeed / Drops.SLIDE_SPEED
 	local grip = 1 - math.exp(-SIDE_GRIP * sideScale * dt)
 	local steerSpeed = STEER_SPEED * sideScale ^ STEER_GROWTH
+	local ease = 1 - math.exp(-CATCH_UP_EASE * dt)
 	for _, dropped in active do
 		local part = dropped.Part
 		local itemVelocity = part.AssemblyLinearVelocity
@@ -365,9 +410,9 @@ local function followItems(current: Drop, dt: number)
 			forward = forward.Unit * maxSpeed
 		end
 		if catchUp > 0 then
-			forward += current.Direction * (maxSpeed - forward:Dot(current.Direction)) * grip
+			forward += current.Direction * (maxSpeed - forward:Dot(current.Direction)) * ease
 		end
-		local ground = workspace:Raycast(part.Position, -Vector3.yAxis * GROUND_PROBE, current.WorldRay)
+		local ground = workspace:Raycast(part.Position, -Vector3.yAxis * dropped.Probe, current.WorldRay)
 		if dropped.Steerable then
 			local apart = (center - part.Position):Dot(right)
 			local outside = math.max(math.abs(apart) - PACK_RADIUS, 0) * math.sign(apart)
@@ -560,8 +605,6 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		StartY = startY,
 		Start = start,
 		Direction = direction,
-		Walls = {},
-		SeenWalls = {},
 		Ending = false,
 		Speed = speed,
 		SlideSpeed = Drops.GetSlideSpeed(speed),
@@ -575,7 +618,6 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	for _, entry in toDrop do
 		spawnCopy(current, entry.Item, entry.Level, entry.SlotKey, entry.CFrame)
 	end
-	addNewWalls(current)
 	showStats(current)
 	local ignored: { Instance } = {}
 	for _, dropped in current.Items do
@@ -597,21 +639,7 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	holdCamera()
 end
 
-local function watchWall(instance: Instance)
-	if Drops.IsWall(instance) then
-		walls[instance :: BasePart] = true
-	end
-end
-
 function DropController.Start()
-	for _, descendant in workspace:GetDescendants() do
-		watchWall(descendant)
-	end
-	workspace.DescendantAdded:Connect(watchWall)
-	workspace.DescendantRemoving:Connect(function(descendant)
-		walls[descendant :: any] = nil
-	end)
-
 	ProximityPromptService.PromptTriggered:Connect(function(prompt)
 		local place = Places.Find(prompt)
 		if place and prompt:FindFirstAncestor(DROP_BUTTON_NAME) then

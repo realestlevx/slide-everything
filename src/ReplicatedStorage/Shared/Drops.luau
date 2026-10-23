@@ -4,8 +4,8 @@ local Upgrades = require(script.Parent.Upgrades)
 -- Dropping the slotted items down the slide. Items slide until the drop's time is up (the owner's
 -- Sliding Time upgrade), and a drop pays in seconds of each item's own income, so it's worth the same
 -- next to the slots whatever the item, its level or how far the player is: every stud an item gets
--- down the slide pays STUD_SECONDS of its income. A multiplier wall across the slide multiplies what
--- every stud past it pays, not what was made before it
+-- down the slide pays STUD_SECONDS of its income. A multiplier wall on the slide multiplies what
+-- every stud past it pays, not what was made before it, for the items that touch it
 local Drops = {
 	STUD_SECONDS = 0.05, -- Items get about 200 studs with no upgrades, which pays 10 seconds
 	COOLDOWN = 10, -- Seconds from the start of one drop to the next
@@ -16,6 +16,15 @@ local Drops = {
 	SLIDE_SPEED = 30,
 	SPEED_SHARE = 0.5,
 	MULTIPLIER_ATTRIBUTE = "Multiplier", -- On the walls across the slide
+	-- A wall with SideToSide on glides across the slide and back, from MoveLeft studs left of where
+	-- it was built to MoveRight studs right of it, as seen looking down the slide
+	SIDE_TO_SIDE_ATTRIBUTE = "SideToSide",
+	MOVE_LEFT_ATTRIBUTE = "MoveLeft",
+	MOVE_RIGHT_ATTRIBUTE = "MoveRight",
+	-- Studs per second it averages over a trip. A wall's own MoveSpeed attribute, if it has one, is
+	-- used instead
+	MOVE_SPEED_ATTRIBUTE = "MoveSpeed",
+	MOVE_SPEED = 20,
 }
 
 -- A multiplier wall, by how far down the slide it is
@@ -26,6 +35,35 @@ export type Wall = {
 
 function Drops.IsWall(instance: Instance): boolean
 	return instance:IsA("BasePart") and typeof(instance:GetAttribute(Drops.MULTIPLIER_ATTRIBUTE)) == "number"
+end
+
+-- A number attribute on the wall, no less than 0, and 0 without one
+local function getPositive(wall: BasePart, name: string): number
+	local value = wall:GetAttribute(name)
+	return if typeof(value) == "number" then math.max(value, 0) else 0
+end
+
+-- Studs to the right of where it was built, looking down the slide, that a wall is at this time
+-- (workspace:GetServerTimeNow()). It's set by the server's clock, so every client sees it in the
+-- same spot, and the server can work out where it was too. 0 for a wall that stays still
+function Drops.GetWallSide(wall: BasePart, time: number): number
+	if wall:GetAttribute(Drops.SIDE_TO_SIDE_ATTRIBUTE) ~= true then
+		return 0
+	end
+	local left = getPositive(wall, Drops.MOVE_LEFT_ATTRIBUTE)
+	local span = left + getPositive(wall, Drops.MOVE_RIGHT_ATTRIBUTE)
+	local speed = getPositive(wall, Drops.MOVE_SPEED_ATTRIBUTE)
+	if speed == 0 then
+		speed = Drops.MOVE_SPEED
+	end
+	if span == 0 then
+		return 0
+	end
+	-- Across and back is one turn. How far it is from its left end follows the cosine of the turn, so
+	-- it slows into each end, and the turn is counted from where it was built
+	local period = 2 * span / speed
+	local turn = math.acos(1 - 2 * left / span) + time % period / period * 2 * math.pi
+	return span * (1 - math.cos(turn)) / 2 - left
 end
 
 -- Studs per second items are held to down the slide, at this Sliding Speed (see SignUpgrades)
@@ -55,8 +93,9 @@ function Drops.AddWall(walls: { Wall }, part: BasePart, start: Vector3, directio
 end
 
 -- A run that got distance studs down the slide, as studs at 1x: each stud counts as many times as
--- the last wall before it multiplies. Also the multiplier it ended at, and how many of the walls it
--- passed multiply at all
+-- the last of the walls before it multiplies. Walls are the ones the item touched, and only count
+-- once it's got as far as them. Also the multiplier it ended at, and how many of the walls it passed
+-- multiply at all
 function Drops.Measure(walls: { Wall }, distance: number): (number, number, number)
 	local paid, from, multiplier, passed = 0, 0, 1, 0
 	for _, wall in walls do

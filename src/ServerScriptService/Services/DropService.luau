@@ -21,6 +21,9 @@ local RESULT_SLACK = 5 -- Seconds past the drop's time that results may still ar
 -- Items go no faster down the slide than the slide speed, plus a little to catch up with the pack.
 -- A result can claim up to this many times as far as that speed goes in the drop's time
 local SPEED_SLACK = 2
+-- Studs. The client names the walls an item touched by how far down the slide they are, and each
+-- names the wall here within this of it
+local WALL_MATCH = 1
 
 type DroppedItem = {
 	Item: Items.Item,
@@ -94,10 +97,31 @@ local function onDrop(place: Folder, player: Player)
 	}
 end
 
--- One item's finished run: how many studs down the slide it got, which comes from the client, so
--- it's held to what the slide speed allows. The walls it passed are worked out from that here. The
--- money waits on the collect pad, and the item joins the pile there
-local function onResult(player: Player, slotKey: any, distance: any)
+-- The walls down the slide that the client says an item touched, nearest first, each once. Only
+-- walls known here count, at the multipliers they have here
+local function getGates(drop: Drop, alongs: any): { Drops.Wall }
+	local gates: { Drops.Wall } = {}
+	if typeof(alongs) ~= "table" then
+		return gates
+	end
+	-- An item can touch each wall only once, so a longer list is cut short
+	local count = math.min(#alongs, #drop.Walls)
+	for _, wall in drop.Walls do
+		for index = 1, count do
+			local along = alongs[index]
+			if typeof(along) == "number" and math.abs(along - wall.Along) <= WALL_MATCH then
+				table.insert(gates, wall)
+				break
+			end
+		end
+	end
+	return gates
+end
+
+-- One item's finished run: how many studs down the slide it got and which walls it touched, which
+-- come from the client, so the distance is held to what the slide speed allows. Only the walls it
+-- touched multiply. The money waits on the collect pad, and the item joins the pile there
+local function onResult(player: Player, slotKey: any, distance: any, alongs: any)
 	local drop = drops[player]
 	local data = PlayerDataService.Get(player)
 	if not (drop and data and typeof(slotKey) == "string") then
@@ -117,7 +141,7 @@ local function onResult(player: Player, slotKey: any, distance: any)
 	dropped.Paid = true
 
 	local reached = math.min(distance, Drops.GetSlideSpeed(drop.Speed) * SPEED_SLACK * drop.Time)
-	local paidDistance = Drops.Measure(drop.Walls, reached)
+	local paidDistance = Drops.Measure(getGates(drop, alongs), reached)
 	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.Speed)
 	data.CollectCash += pay
 	table.insert(data.CollectItems, dropped.Item.Id)

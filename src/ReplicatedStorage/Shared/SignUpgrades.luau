@@ -61,19 +61,19 @@ local function getSpeedLevels(): { Level }
 	return levels
 end
 
--- 7.5s, 9s and so on up to 15s: how long a drop's items slide before they fade out, so how far they
--- get. Not on the economy sheet yet, so the prices are a placeholder: 500 for 9s, then 4x more each level
-local TIME_START = 7.5 -- Seconds
-local TIME_STEP = 1.5
-local TIME_STEPS = 5
+-- 7.5s, 9s and so on up to 15s, then bigger steps up to 4 minutes: how long a drop's items slide
+-- before they fade out, so how far they get. Not on the economy sheet yet, so the prices are a
+-- placeholder: 500 for 9s, then 4x more each level, about 8.2M for 30s, 524M for 60s, 134B for 120s
+-- and 34T for 240s
+local TIME_VALUES = { 7.5, 9, 10.5, 12, 13.5, 15, 20, 25, 30, 40, 50, 60, 75, 90, 105, 120, 150, 180, 210, 240 } -- Seconds
 local TIME_PRICE = 500 -- What 9s costs
 local TIME_PRICE_GROWTH = 4
 
 local function getTimeLevels(): { Level }
-	local prices = getPrices({ TIME_PRICE }, TIME_PRICE_GROWTH, TIME_STEPS)
-	local levels: { Level } = { { Value = TIME_START } }
-	for step = 1, TIME_STEPS do
-		table.insert(levels, { Value = TIME_START + step * TIME_STEP, Price = prices[step] })
+	local prices = getPrices({ TIME_PRICE }, TIME_PRICE_GROWTH, #TIME_VALUES - 1)
+	local levels: { Level } = { { Value = TIME_VALUES[1] } }
+	for index = 2, #TIME_VALUES do
+		table.insert(levels, { Value = TIME_VALUES[index], Price = prices[index - 1] })
 	end
 	return levels
 end
