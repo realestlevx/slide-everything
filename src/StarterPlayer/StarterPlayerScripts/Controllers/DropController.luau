@@ -10,6 +10,7 @@ local Items = require(ReplicatedStorage.Shared.Items)
 local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
+local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local CollectController = require(script.Parent.CollectController)
 local HudController = require(script.Parent.HudController)
@@ -32,12 +33,16 @@ local SLOT_ITEM_NAME = "SlotItem"
 -- that down the slide; falling isn't slowed
 local ITEM_PHYSICS = PhysicalProperties.new(0.7, 0.05, 0.2, 100, 1)
 -- Studs per second sideways while the player steers, at the slide speed before any Sliding Speed
--- upgrade. Sideways speeds (steering and the pack's pull) grow with the slide speed, so the pack
--- steers across just as sharply, and holds together just as tightly, however fast it slides
+-- upgrade. Steering grows faster than the slide speed, by its rise to the power of STEER_GROWTH, so a
+-- faster pack cuts across more sharply and still makes the gates that come at it sooner: at 2x slide
+-- speed it steers 2.8x as fast, and at 3x 5.2x. The pack's pull grows just with the slide speed, so
+-- it holds together just as tightly however fast it slides
 local STEER_SPEED = 15
+local STEER_GROWTH = 1.5
 -- On the slide, items grip sideways like sleds: they slide where they're steered and stop
--- drifting once let go, instead of skidding off. How quickly they take up a new sideways speed;
--- higher is tighter
+-- drifting once let go, instead of skidding off. How quickly they take up a new sideways speed at the
+-- slide speed before any upgrade; higher is tighter. It grows with the slide speed, so they take it up
+-- over the same stretch of slide however fast they go, instead of running on straight for longer
 local SIDE_GRIP = 8
 -- They're drawn in toward the middle of the pack, so they slide down together and steer as one
 local PACK_RADIUS = 3 -- Studs either side of the middle where nothing pulls
@@ -214,10 +219,10 @@ local function finishItem(current: Drop, dropped: DroppedItem)
 	task.delay(ITEM_FADE_INFO.Time, dropped.Part.Destroy, dropped.Part)
 end
 
--- A physical copy of the item where its display floats in the slot. Made on this client only, so
--- the server doesn't simulate anyone's drop
+-- A physical copy of the item where its display floats in the slot, as big as it shows there at its
+-- level. Made on this client only, so the server doesn't simulate anyone's drop
 local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey: string, cframe: CFrame)
-	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS)
+	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS, Upgrades.GetSize(level))
 	local attachment = Instance.new("Attachment")
 	attachment.Parent = copy
 	local align = Instance.new("AlignOrientation")
@@ -341,8 +346,9 @@ local function followItems(current: Drop, dt: number)
 
 	local steer = HudController.GetSteer()
 	local right = current.Direction:Cross(Vector3.yAxis)
-	local grip = 1 - math.exp(-SIDE_GRIP * dt)
 	local sideScale = current.SlideSpeed / Drops.SLIDE_SPEED
+	local grip = 1 - math.exp(-SIDE_GRIP * sideScale * dt)
+	local steerSpeed = STEER_SPEED * sideScale ^ STEER_GROWTH
 	for _, dropped in active do
 		local part = dropped.Part
 		local itemVelocity = part.AssemblyLinearVelocity
@@ -366,7 +372,7 @@ local function followItems(current: Drop, dt: number)
 			local apart = (center - part.Position):Dot(right)
 			local outside = math.max(math.abs(apart) - PACK_RADIUS, 0) * math.sign(apart)
 			local pull = math.clamp(outside * PACK_PULL, -MAX_PACK_PULL, MAX_PACK_PULL)
-			local target = (steer * STEER_SPEED + pull) * sideScale
+			local target = steer * steerSpeed + pull * sideScale
 			if ground then
 				local tilt = ground.Normal:Dot(right) -- Above 0 where the ground falls away to the right
 				local steepness = math.clamp((math.abs(tilt) - FLAT_TILT) / (STEEP_TILT - FLAT_TILT), 0, 1)

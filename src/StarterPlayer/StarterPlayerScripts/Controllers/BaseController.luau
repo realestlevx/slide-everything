@@ -20,8 +20,10 @@ local CHECK_INTERVAL = 0.2 -- Seconds between checks
 -- Touching a part with this name anywhere in Workspace sends the player back to their base
 local KILL_PART_NAME = "KillPart"
 -- Kill parts float: they rock about their own X axis, ROCK_ANGLE either way, and bob up and down,
--- each on its own beat so the two don't move in step. Done on each client, so it's smooth, and
--- touches are checked against where the player sees it
+-- each on its own beat so the two don't move in step. Everything else in a kill part's own folder or
+-- model, like the water's surface laid over it, floats along with it as one piece; a kill part right
+-- in Workspace or in a place floats alone. Done on each client, so it's smooth, and touches are
+-- checked against where the player sees it
 local ROCK_ANGLE = math.rad(1)
 local ROCK_PERIOD = 5 -- Seconds to rock there and back
 local BOB_HEIGHT = 2 -- Studs above and below where it was built
@@ -41,8 +43,14 @@ local FADE_DISPLAY_ORDER = 100 -- Over every other gui, which are all lower
 -- Floor<N>Spawn part (see Floors.GetSpawnName)
 local SPAWN_OFFSET = Vector3.new(0, 3, 0) -- Above a floor's spawn, as PlaceService puts new characters
 
+type Float = {
+	Center: CFrame, -- Where the kill part was built, which everything floating with it rocks about
+	Parts: { [BasePart]: CFrame }, -- The kill part and everything floating with it -> where each was built
+	Connection: RBXScriptConnection?, -- Picks up parts of its folder that stream in later
+}
+
 local goingHome = false
-local killParts: { [BasePart]: CFrame } = {} -- Each kill part -> where it was built
+local floats: { [BasePart]: Float } = {} -- Each kill part -> what floats with it
 
 local BaseController = {}
 
@@ -166,18 +174,44 @@ local function watchKillPart(instance: Instance)
 			task.spawn(goHome)
 		end
 	end)
-	killParts[instance] = instance.CFrame
+
+	local float: Float = { Center = instance.CFrame, Parts = { [instance] = instance.CFrame } }
+	-- Another kill part in the same folder floats on its own
+	local function ride(descendant: Instance)
+		if descendant:IsA("BasePart") and descendant.Name ~= KILL_PART_NAME and not float.Parts[descendant] then
+			float.Parts[descendant] = descendant.CFrame
+		end
+	end
+	local group = instance.Parent
+	if group and group ~= workspace and not Places.Find(instance) then
+		for _, descendant in group:GetDescendants() do
+			ride(descendant)
+		end
+		float.Connection = group.DescendantAdded:Connect(ride)
+	end
+	floats[instance] = float
 end
 
 local function floatKillParts()
 	local now = os.clock()
 	local lift = Vector3.yAxis * math.sin(now * 2 * math.pi / BOB_PERIOD) * BOB_HEIGHT
 	local tilt = CFrame.Angles(math.sin(now * 2 * math.pi / ROCK_PERIOD) * ROCK_ANGLE, 0, 0)
-	for part, rest in killParts do
-		if part.Parent then
-			part.CFrame = (rest + lift) * tilt
-		else
-			killParts[part] = nil
+	for killPart, float in floats do
+		if not killPart.Parent then
+			if float.Connection then
+				float.Connection:Disconnect()
+			end
+			floats[killPart] = nil
+			continue
+		end
+		-- Moves everything the way the kill part moves from where it was built
+		local move = (float.Center + lift) * tilt * float.Center:Inverse()
+		for part, rest in float.Parts do
+			if part.Parent then
+				part.CFrame = move * rest
+			else
+				float.Parts[part] = nil
+			end
 		end
 	end
 end

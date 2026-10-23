@@ -4,6 +4,7 @@ local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local LocalHide = require(ReplicatedStorage.Shared.LocalHide)
 local Places = require(ReplicatedStorage.Shared.Places)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 
@@ -31,18 +32,6 @@ local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirecti
 -- Only a place's owner sees its signs. On everyone else's screen the copies of its panels are off,
 -- and everything in the place's Signs folder is hidden: the boards, their lights and any other guis
 local SIGNS_FOLDER_NAME = "Signs"
--- The properties that hide each kind of thing on a sign, and what they're set to. The first class
--- that matches wins. Panel guis aren't here: their copies are turned off instead, and the originals
--- stay off for good (see copySign)
-local HIDING: { { Class: string, Properties: { [string]: any } } } = {
-	{ Class = "BasePart", Properties = { Transparency = 1, CanCollide = false, CanQuery = false } },
-	{ Class = "Decal", Properties = { Transparency = 1 } }, -- Textures too
-	{ Class = "LayerCollector", Properties = { Enabled = false } },
-	{ Class = "Light", Properties = { Enabled = false } },
-	{ Class = "ParticleEmitter", Properties = { Enabled = false } },
-	{ Class = "Beam", Properties = { Enabled = false } },
-	{ Class = "Trail", Properties = { Enabled = false } },
-}
 
 type Panel = {
 	Price: TextLabel?,
@@ -58,9 +47,6 @@ type Sign = {
 local signs: { [SurfaceGui]: Sign } = {} -- The sign's own SurfaceGui -> its copy
 local priceColors: { [TextLabel]: Color3 } = {} -- Each price label's own color, taken before it first flashes
 local lastClicks: { [string]: number } = {} -- Panel name -> when its button last took a click, on any sign
--- Each hidden part of a sign -> what the properties that hide it were before. Weak, so parts that
--- stream out aren't kept
-local hidden: { [Instance]: { [string]: any } } = setmetatable({}, { __mode = "k" }) :: any
 
 local SignController = {}
 
@@ -83,30 +69,11 @@ local function hasPanel(gui: SurfaceGui): boolean
 	return false
 end
 
--- Hides one part of a sign on this client, or puts back what it had
+-- Panel guis are left out: their copies are turned off instead, and the originals stay off for
+-- good (see copySign)
 local function setHidden(instance: Instance, hide: boolean)
-	if instance:IsA("SurfaceGui") and hasPanel(instance) then
-		return
-	end
-	for _, rule in HIDING do
-		if not instance:IsA(rule.Class) then
-			continue
-		end
-		local saved = hidden[instance]
-		if hide and not saved then
-			saved = {}
-			for property, value in rule.Properties do
-				saved[property] = (instance :: any)[property];
-				(instance :: any)[property] = value
-			end
-			hidden[instance] = saved
-		elseif not hide and saved then
-			for property, value in saved do
-				(instance :: any)[property] = value
-			end
-			hidden[instance] = nil
-		end
-		return
+	if not (instance:IsA("SurfaceGui") and hasPanel(instance)) then
+		LocalHide.Set(instance, hide)
 	end
 end
 

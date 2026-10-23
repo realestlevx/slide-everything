@@ -44,10 +44,13 @@ type StackItem = {
 	Part: BasePart, -- The item's outer part, with any others welded inside
 }
 
--- Only the player's own stack is made, on this client. The server keeps what's in it, and says so
--- with the place's CollectItems attribute
-local stack: { StackItem } = {}
+-- Every place's stack is made on this client. The server keeps what's in each, and says so with
+-- the place's CollectItems attribute. The player's own stack puts on a show: items fade in as they
+-- finish, the saved stack comes back an item at a time, and collected items fly into the player.
+-- Other players' stacks just show what's in them, changing at once
+local stacks: { [Folder]: { StackItem } } = {}
 local stackPlace: Folder? = nil -- The place whose saved stack has been put back, which happens once
+local synced: { [Folder]: number } = {} -- Other places -> how many of their CollectItems are stacked
 local itemsFlying = 0 -- Collected items still on their way into the player
 local lastCash: { [Folder]: number } = {} -- Each place's CollectCash when it was last seen
 local tickSounds: { Sound } = {} -- Ticks still playing, oldest first
@@ -56,6 +59,15 @@ local CollectController = {}
 
 local function isOwn(place: Folder): boolean
 	return place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+end
+
+local function getStack(place: Folder): { StackItem }
+	local stack = stacks[place]
+	if not stack then
+		stack = {}
+		stacks[place] = stack
+	end
+	return stack
 end
 
 local function getStackPart(place: Folder): BasePart?
@@ -110,9 +122,10 @@ local function findLanding(stackPart: BasePart, rotation: CFrame, size: Vector3)
 	return lowest
 end
 
--- A finished item appears on top of the stack, anchored where it lands
-function CollectController.AddToPile(place: Folder, item: Items.Item)
+-- A finished item appears on top of the stack, anchored where it lands. It fades in unless instant
+function CollectController.AddToPile(place: Folder, item: Items.Item, instant: boolean?)
 	local stackPart = getStackPart(place)
+	local stack = getStack(place)
 	if not stackPart or #stack >= Drops.MAX_PILE then
 		return
 	end
@@ -126,8 +139,10 @@ function CollectController.AddToPile(place: Folder, item: Items.Item)
 	local copy = PhysicalItem.Create(item, landing)
 	-- Only the outer part is anchored; the parts inside are welded to it, so they move with it
 	copy.Anchored = true
-	ItemModel.SetLocalTransparency(copy, 1)
-	ItemModel.TweenLocalTransparency(copy, APPEAR_INFO, 0)
+	if not instant then
+		ItemModel.SetLocalTransparency(copy, 1)
+		ItemModel.TweenLocalTransparency(copy, APPEAR_INFO, 0)
+	end
 	copy.Parent = workspace
 	table.insert(stack, { Part = copy })
 end
@@ -208,7 +223,8 @@ local function flyToPlayer(stackItem: StackItem, startDelay: number, pitch: numb
 	itemsFlying -= 1
 end
 
-local function collectStack()
+local function collectStack(place: Folder)
+	local stack = getStack(place)
 	playSound("Collect")
 	itemsFlying += #stack
 	local startDelay, gap, pitch = 0, FIRST_GAP, 1
@@ -221,17 +237,50 @@ local function collectStack()
 	table.clear(stack)
 end
 
-local function clearStack()
+local function clearStack(place: Folder)
+	local stack = getStack(place)
 	for _, stackItem in stack do
 		stackItem.Part:Destroy()
 	end
 	table.clear(stack)
+	synced[place] = nil
+end
+
+local function getSavedIds(place: Folder): { string }
+	local saved = place:GetAttribute("CollectItems")
+	local ids = {}
+	if typeof(saved) == "string" then
+		for id in saved:gmatch("[^,]+") do
+			table.insert(ids, id)
+		end
+	end
+	return ids
+end
+
+-- Someone else's stack: items that finish there appear at once, and all of them vanish once it's
+-- collected. Their pad may not have streamed in yet, in which case it's stacked once it does
+local function syncOtherStack(place: Folder)
+	local ids = getSavedIds(place)
+	if #ids < (synced[place] or 0) then
+		clearStack(place)
+	end
+	if not getStackPart(place) then
+		return
+	end
+	for index = (synced[place] or 0) + 1, #ids do
+		local item = Items[ids[index]]
+		if item then
+			CollectController.AddToPile(place, item, true)
+		end
+	end
+	synced[place] = #ids
 end
 
 -- The saved stack comes back once, the first time the player's data shows up on their place. After
 -- that, it grows as items finish here, and flies to the player when the pad is collected
 local function onStackChanged(place: Folder)
 	if not isOwn(place) then
+		syncOtherStack(place)
 		return
 	end
 	local saved = place:GetAttribute("CollectItems")
@@ -241,8 +290,8 @@ local function onStackChanged(place: Folder)
 
 	if stackPlace ~= place then
 		stackPlace = place
-		clearStack()
-		for id in saved:gmatch("[^,]+") do
+		clearStack(place)
+		for _, id in getSavedIds(place) do
 			local item = Items[id]
 			if item then
 				CollectController.AddToPile(place, item)
@@ -250,7 +299,7 @@ local function onStackChanged(place: Folder)
 			end
 		end
 	elseif saved == "" then
-		collectStack()
+		collectStack(place)
 	end
 end
 
@@ -277,7 +326,7 @@ local function onCashChanged(place: Folder)
 	CurrencyController.HoldCash(last - cash)
 	-- Items still in the stack are about to fly, once the emptied CollectItems arrives. With none
 	-- at all, it pops out in one go
-	if itemsFlying == 0 and #stack == 0 then
+	if itemsFlying == 0 and #getStack(place) == 0 then
 		CurrencyController.PopCash(1)
 	end
 end
@@ -291,10 +340,12 @@ function CollectController.Start()
 			showCash(place)
 			onCashChanged(place)
 		end)
-		-- The pad is streamed, so its billboard can arrive after the cash
+		-- The pad is streamed, so its billboard and stack part can arrive after the attributes
 		place.DescendantAdded:Connect(function(descendant)
 			if descendant.Name == BILLBOARD_NAME then
 				showCash(place)
+			elseif descendant.Name == STACK_PART_NAME and not isOwn(place) then
+				syncOtherStack(place)
 			end
 		end)
 
@@ -306,10 +357,11 @@ function CollectController.Start()
 			-- A new owner's cash on the pad isn't a collect, even if it's less than the last one's
 			local ownCash = place:GetAttribute("CollectCash")
 			lastCash[place] = if typeof(ownCash) == "number" then ownCash else nil
-			if stackPlace == place and not isOwn(place) then
+			-- Whatever was stacked here was the last owner's
+			if stackPlace == place then
 				stackPlace = nil
-				clearStack()
 			end
+			clearStack(place)
 			onStackChanged(place)
 		end)
 	end

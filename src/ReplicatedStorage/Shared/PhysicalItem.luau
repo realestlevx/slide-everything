@@ -5,12 +5,20 @@ local Items = require(script.Parent.Items)
 
 local PhysicalItem = {}
 
--- An unanchored copy of the item, at the given CFrame, for physics on the client that makes it. The
--- parts inside it are welded on and only show; the outer part is what collides. Comes with all its
--- parts, and isn't parented yet
-function PhysicalItem.Create(item: Items.Item, cframe: CFrame, physics: PhysicalProperties?): (BasePart, { BasePart })
+-- An unanchored copy of the item, at the given CFrame and share of its own size (full size if not
+-- given), for physics on the client that makes it. The parts inside it are welded on and only show;
+-- the outer part is what collides. Comes with all its parts, and isn't parented yet
+function PhysicalItem.Create(
+	item: Items.Item,
+	cframe: CFrame,
+	physics: PhysicalProperties?,
+	scale: number?
+): (BasePart, { BasePart })
 	local copy = ReplicatedStorage.Items[item.MeshName]:Clone() :: BasePart
 	ItemModel.Prepare(copy)
+	if scale then
+		ItemModel.SetScale(copy, scale)
+	end
 	ItemModel.PivotTo(copy, cframe)
 	local parts = ItemModel.GetParts(copy)
 	for _, part in parts do

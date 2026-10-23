@@ -11,11 +11,11 @@ local Upgrades = {
 	INCOME_MULTIPLIER = 1.2,
 	FIRST_COST = 5, -- Seconds of the item's base income
 	COST_GROWTH = 2,
-	MAX_LEVEL = 100, -- An item at this level can't be upgraded any further
-	-- Items in slots grow with their level, so a well upgraded one stands out: 5% bigger for every
-	-- level above 1, up to 2.5 times their own size from level 31 on
-	SIZE_STEP = 0.05,
-	MAX_SIZE = 2.5,
+	MAX_LEVEL = 75, -- An item at this level can't be upgraded any further
+	-- Items in slots grow with their level, so a well upgraded one stands out: a little bigger for
+	-- every level above 1, up to 3 times their own size from level 25 on
+	MAX_SIZE = 3,
+	MAX_SIZE_LEVEL = 25,
 }
 
 -- Items saved before upgrades existed have no level
@@ -29,7 +29,8 @@ end
 
 -- How big the item shows in its slot at this level, as a share of its own size
 function Upgrades.GetSize(level: number): number
-	return math.min(1 + (level - 1) * Upgrades.SIZE_STEP, Upgrades.MAX_SIZE)
+	local growth = math.clamp((level - 1) / (Upgrades.MAX_SIZE_LEVEL - 1), 0, 1)
+	return 1 + (Upgrades.MAX_SIZE - 1) * growth
 end
 
 -- What going from this level to the next costs, in whole dollars
