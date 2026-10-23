@@ -28,6 +28,12 @@ function Floors.GetMarkerName(number: number): string
 	return `Floor{number}_Position`
 end
 
+-- The part in the floor's model that the top bar's Next and Back buttons send the owner to (see
+-- BaseController). Floor 1's is the place's own Spawn
+function Floors.GetSpawnName(number: number): string
+	return `Floor{number}Spawn`
+end
+
 -- What the sign sells the floor for, or nil if it isn't for sale
 function Floors.GetPrice(number: number): number?
 	return Floors.Prices[number]

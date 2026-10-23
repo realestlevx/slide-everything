@@ -132,12 +132,16 @@ local pressButton: { [number]: (held: boolean) -> () } = {} -- Side -> holds its
 
 local exitRequested = Instance.new("BindableEvent")
 local homeRequested = Instance.new("BindableEvent")
+local floorRequested = Instance.new("BindableEvent")
 
 local HudController = {
 	-- Fires when the player asks to leave the drop view with its Exit button
 	ExitRequested = exitRequested.Event,
 	-- Fires when the player asks to go back to their base with the top bar's Base button
 	HomeRequested = homeRequested.Event,
+	-- Fires with 1 when the player asks for the floor above with the top bar's Next button, and -1
+	-- for the floor below with Back
+	FloorRequested = floorRequested.Event,
 }
 
 local function isShown(name: string): boolean
@@ -585,6 +589,11 @@ local function bindTop(gui: Instance)
 	local baseButtons = main:WaitForChild("BaseButtons") :: GuiObject
 	local outsideButtons = main:WaitForChild("OutsideBaseButtons") :: GuiObject
 	local homeButton = outsideButtons:WaitForChild("BaseButton") :: GuiButton
+	-- Found before they're animated, which moves each into a holder of its own
+	local floorButtons: { [GuiButton]: number } = { -- Button -> the way it steps through the floors
+		[baseButtons:WaitForChild("NextButton") :: GuiButton] = 1,
+		[baseButtons:WaitForChild("BackButton") :: GuiButton] = -1,
+	}
 	local spectate = main:WaitForChild("Spectate") :: GuiObject
 	local exitButton = spectate:WaitForChild("ExitControlButton") :: GuiButton
 
@@ -602,6 +611,11 @@ local function bindTop(gui: Instance)
 	homeButton.Activated:Connect(function()
 		homeRequested:Fire()
 	end)
+	for button, step in floorButtons do
+		button.Activated:Connect(function()
+			floorRequested:Fire(step)
+		end)
+	end
 
 	addPiece("BaseButtons", baseButtons, "Top")
 	addPiece("OutsideBaseButtons", outsideButtons, "Top")
