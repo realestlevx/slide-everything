@@ -28,6 +28,22 @@ local MAX_TEXT = "MAX" -- On the button once there's nothing left to buy
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
 
+-- Only a place's owner sees its signs. On everyone else's screen the copies of its panels are off,
+-- and everything in the place's Signs folder is hidden: the boards, their lights and any other guis
+local SIGNS_FOLDER_NAME = "Signs"
+-- The properties that hide each kind of thing on a sign, and what they're set to. The first class
+-- that matches wins. Panel guis aren't here: their copies are turned off instead, and the originals
+-- stay off for good (see copySign)
+local HIDING: { { Class: string, Properties: { [string]: any } } } = {
+	{ Class = "BasePart", Properties = { Transparency = 1, CanCollide = false, CanQuery = false } },
+	{ Class = "Decal", Properties = { Transparency = 1 } }, -- Textures too
+	{ Class = "LayerCollector", Properties = { Enabled = false } },
+	{ Class = "Light", Properties = { Enabled = false } },
+	{ Class = "ParticleEmitter", Properties = { Enabled = false } },
+	{ Class = "Beam", Properties = { Enabled = false } },
+	{ Class = "Trail", Properties = { Enabled = false } },
+}
+
 type Panel = {
 	Price: TextLabel?,
 	Value: TextLabel?,
@@ -42,6 +58,9 @@ type Sign = {
 local signs: { [SurfaceGui]: Sign } = {} -- The sign's own SurfaceGui -> its copy
 local priceColors: { [TextLabel]: Color3 } = {} -- Each price label's own color, taken before it first flashes
 local lastClicks: { [string]: number } = {} -- Panel name -> when its button last took a click, on any sign
+-- Each hidden part of a sign -> what the properties that hide it were before. Weak, so parts that
+-- stream out aren't kept
+local hidden: { [Instance]: { [string]: any } } = setmetatable({}, { __mode = "k" }) :: any
 
 local SignController = {}
 
@@ -49,6 +68,67 @@ local SignController = {}
 local panelFrames: { [string]: string } = { [SLOTS_PANEL] = SLOTS_FRAME_NAME }
 for name, upgrade in SignUpgrades.Upgrades do
 	panelFrames[name] = upgrade.Frame
+end
+
+local function isOwner(place: Folder): boolean
+	return place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+end
+
+local function hasPanel(gui: SurfaceGui): boolean
+	for _, frameName in panelFrames do
+		if gui:FindFirstChild(frameName, true) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Hides one part of a sign on this client, or puts back what it had
+local function setHidden(instance: Instance, hide: boolean)
+	if instance:IsA("SurfaceGui") and hasPanel(instance) then
+		return
+	end
+	for _, rule in HIDING do
+		if not instance:IsA(rule.Class) then
+			continue
+		end
+		local saved = hidden[instance]
+		if hide and not saved then
+			saved = {}
+			for property, value in rule.Properties do
+				saved[property] = (instance :: any)[property];
+				(instance :: any)[property] = value
+			end
+			hidden[instance] = saved
+		elseif not hide and saved then
+			for property, value in saved do
+				(instance :: any)[property] = value
+			end
+			hidden[instance] = nil
+		end
+		return
+	end
+end
+
+local function isOnSign(place: Folder, instance: Instance): boolean
+	local folder = place:FindFirstChild(SIGNS_FOLDER_NAME)
+	return folder ~= nil and instance:IsDescendantOf(folder)
+end
+
+-- When the place changes hands, its signs show or hide for this player to match
+local function refreshOwner(place: Folder)
+	local owned = isOwner(place)
+	local folder = place:FindFirstChild(SIGNS_FOLDER_NAME)
+	if folder then
+		for _, descendant in folder:GetDescendants() do
+			setHidden(descendant, not owned)
+		end
+	end
+	for _, sign in signs do
+		if sign.Place == place then
+			sign.Gui.Enabled = owned
+		end
+	end
 end
 
 local function show(panel: Panel, value: string, price: number?)
@@ -117,17 +197,9 @@ local function buy(place: Folder, name: string)
 	end
 end
 
-local function hasPanel(gui: SurfaceGui): boolean
-	for _, frameName in panelFrames do
-		if gui:FindFirstChild(frameName, true) then
-			return true
-		end
-	end
-	return false
-end
-
 -- Buttons only take clicks from a SurfaceGui under PlayerGui, so each player shows a copy from there,
--- on the sign's part. The one on the sign is just the design to copy, and stays hidden
+-- on the sign's part. The one on the sign is just the design to copy, and stays hidden. The copy is
+-- only on for the place's owner
 local function copySign(place: Folder, original: SurfaceGui)
 	local old = signs[original]
 	if old then
@@ -137,6 +209,7 @@ local function copySign(place: Folder, original: SurfaceGui)
 	local gui = original:Clone()
 	gui.Adornee = original.Parent
 	gui.ResetOnSpawn = false
+	gui.Enabled = isOwner(place)
 	original.Enabled = false
 
 	local sign: Sign = { Place = place, Gui = gui, Panels = {} }
@@ -154,8 +227,7 @@ local function copySign(place: Folder, original: SurfaceGui)
 
 		if button then
 			button.Activated:Connect(function()
-				-- Everyone sees each place's signs, but only its owner can buy from them
-				if place:GetAttribute("OwnerUserId") == LocalPlayer.UserId then
+				if isOwner(place) then
 					buy(place, name)
 				end
 			end)
@@ -185,9 +257,13 @@ local function copySign(place: Folder, original: SurfaceGui)
 	gui.Parent = PlayerGui
 end
 
+-- Signs stream in a part at a time, and each part is hidden as it arrives if the sign isn't this player's
 local function onDescendantAdded(place: Folder, descendant: Instance)
 	if descendant:IsA("SurfaceGui") and hasPanel(descendant) then
 		copySign(place, descendant)
+	end
+	if not isOwner(place) and isOnSign(place, descendant) then
+		setHidden(descendant, true)
 	end
 end
 
@@ -212,7 +288,7 @@ local function onResult(name: string, bought: boolean)
 	for _, sign in signs do
 		local panel = sign.Panels[name]
 		local price = panel and panel.Price
-		if price and sign.Place:GetAttribute("OwnerUserId") == LocalPlayer.UserId then
+		if price and isOwner(sign.Place) then
 			local color = priceColors[price] or price.TextColor3
 			priceColors[price] = color
 			-- Starting a new tween on TextColor3 cancels a flash that's still fading
@@ -241,6 +317,9 @@ function SignController.Start()
 				refreshPlace(place)
 			end)
 		end
+		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+			refreshOwner(place)
+		end)
 	end
 
 	BuySlotResult.OnClientEvent:Connect(function(bought: boolean)

@@ -9,6 +9,7 @@ local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
+local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
@@ -36,6 +37,10 @@ local BUY_TEXT_COLOR = Color3.fromRGB(40, 220, 70)
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
 local SLOT_FADE_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+-- Items show bigger the higher their level (see Upgrades.GetSize). The server's copy in the slot is
+-- at the item's own size, and each client grows it, from its bottom so it rises out of the slot.
+-- Upgraded, it grows to the new size, popping a little past it, and its billboard rises with it
+local GROW_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 -- "+ $X" popups over each earning slot, copied from the Cash BillboardGui in its slot part (with an
 -- Amount TextLabel). They start at its StudsOffset and float up while fading out
@@ -75,6 +80,10 @@ local priceColors: { [TextLabel]: Color3 } = {} -- Each upgrade price label's ow
 local promptColors: { [ProximityPrompt]: Color3 } = {}
 local fadedPlaces: { [Folder]: boolean } = {} -- Places whose slots are faded out while their items drop
 local billboardSizes: { [BillboardGui]: UDim2 } = {} -- Each billboard's own size, taken before it first shrinks away
+-- Each billboard's own StudsOffsetWorldSpace, taken before it first rises over a grown item
+local billboardOffsets: { [BillboardGui]: Vector3 } = {}
+-- Each slot item -> the size it's growing to, or at, so it only grows again when its level changes
+local itemSizes: { [BasePart]: number } = setmetatable({}, { __mode = "k" }) :: any
 local placing: { [Model]: Placing } = {} -- Slots this player is putting an item into right now
 local filledAt: { [Model]: number } = {} -- When an item was last put in each slot by hand
 local rarityTransparencies: { [BasePart]: number } = {} -- Each rarity part's own transparency, taken before it first flashes
@@ -102,6 +111,48 @@ end
 local function getLevel(slot: Model): number
 	local level = slot:GetAttribute("ItemLevel")
 	return if typeof(level) == "number" then level else 1
+end
+
+-- How big the slot's item shows, as a share of its own size
+local function getSize(slot: Model): number
+	return Upgrades.GetSize(getLevel(slot))
+end
+
+-- The billboard sits as high over the item's top as it was designed to at the item's own size, so a
+-- grown item doesn't cover it
+local function placeBillboard(slot: Model, info: TweenInfo?)
+	local billboard = billboards[slot]
+	local slotPart = slot:FindFirstChild(Places.SLOT_PART)
+	if not (billboard and slotPart and slotPart:IsA("BasePart")) then
+		return
+	end
+	local offset = billboardOffsets[billboard] or billboard.StudsOffsetWorldSpace
+	billboardOffsets[billboard] = offset
+
+	local item = getItem(slot)
+	local rise = 0
+	if item then
+		-- Turned the way the server's copy is in the slot (see Rolling.CreateDisplay)
+		local rotation, size = PhysicalItem.GetShape(item)
+		rise = (getSize(slot) - 1) * ItemModel.GetHeight(slotPart.CFrame.Rotation * rotation, size)
+	end
+	local goal = offset + Vector3.yAxis * rise
+	if info then
+		TweenService:Create(billboard, info, { StudsOffsetWorldSpace = goal }):Play()
+	else
+		billboard.StudsOffsetWorldSpace = goal
+	end
+end
+
+-- The item's level changed, like after an upgrade: it grows to its new size
+local function grow(slot: Model)
+	local display = slot:FindFirstChild(SLOT_ITEM_NAME)
+	local size = getSize(slot)
+	if display and display:IsA("BasePart") and itemSizes[display] ~= size then
+		itemSizes[display] = size
+		ItemModel.TweenScale(display, GROW_INFO, size)
+	end
+	placeBillboard(slot, GROW_INFO)
 end
 
 local function showStats(billboard: BillboardGui, item: Items.Item, level: number)
@@ -194,9 +245,11 @@ local function watchSlot(place: Folder, slot: Model)
 	end)
 	slot:GetAttributeChangedSignal("ItemId"):Connect(function()
 		refresh(slot)
+		placeBillboard(slot)
 	end)
 	slot:GetAttributeChangedSignal("ItemLevel"):Connect(function()
 		refresh(slot)
+		grow(slot)
 	end)
 	slot:GetAttributeChangedSignal("Unlocked"):Connect(function()
 		refresh(slot)
@@ -238,6 +291,7 @@ local function copyBillboard(slot: Model, original: BillboardGui)
 	end)
 
 	refresh(slot)
+	placeBillboard(slot)
 	billboard.Parent = PlayerGui
 end
 
@@ -350,10 +404,13 @@ local function flashRarity(slot: Model)
 	TweenService:Create(part, FLASH_INFO, { Transparency = own }):Play()
 end
 
--- The item springs up into its slot from a little smaller, with a burst and a flash
+-- The item springs up into its slot from a little smaller than its level's size, with a burst and a
+-- flash
 local function land(slot: Model, display: BasePart)
-	ItemModel.SetScale(display, LAND_SCALE)
-	ItemModel.TweenScale(display, LAND_INFO, 1)
+	local size = getSize(slot)
+	itemSizes[display] = size
+	ItemModel.SetScale(display, LAND_SCALE * size)
+	ItemModel.TweenScale(display, LAND_INFO, size)
 	burstParticles(slot, FINISH_NAME)
 	flashRarity(slot)
 end
@@ -459,8 +516,12 @@ end
 
 local function onDescendantAdded(place: Folder, descendant: Instance)
 	if descendant.Name == SLOT_ITEM_NAME and descendant:IsA("BasePart") then
-		FloatController.Float(descendant)
+		FloatController.Float(descendant, true)
 		local slot = descendant.Parent
+		if slot and slot:IsA("Model") then
+			itemSizes[descendant] = getSize(slot)
+			ItemModel.SetScale(descendant, itemSizes[descendant])
+		end
 		if fadedPlaces[place] then
 			ItemModel.SetLocalTransparency(descendant, 1)
 		end

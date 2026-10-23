@@ -31,7 +31,10 @@ local SLOT_ITEM_NAME = "SlotItem"
 -- gentlest ramp. The slide speed (see Drops.GetSlideSpeed) then keeps them from going faster than
 -- that down the slide; falling isn't slowed
 local ITEM_PHYSICS = PhysicalProperties.new(0.7, 0.05, 0.2, 100, 1)
-local STEER_SPEED = 15 -- Studs per second sideways while the player steers
+-- Studs per second sideways while the player steers, at the slide speed before any Sliding Speed
+-- upgrade. Sideways speeds (steering and the pack's pull) grow with the slide speed, so the pack
+-- steers across just as sharply, and holds together just as tightly, however fast it slides
+local STEER_SPEED = 15
 -- On the slide, items grip sideways like sleds: they slide where they're steered and stop
 -- drifting once let go, instead of skidding off. How quickly they take up a new sideways speed;
 -- higher is tighter
@@ -61,14 +64,16 @@ local END_PAUSE = 0.75 -- Seconds the camera stays on where the items ended up
 local ITEM_FADE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 -- The camera chases the items from straight behind, looking down the slide, raised by FOLLOW_PITCH.
--- It follows them down the slide and up and down, but stays over the slide's middle and only turns a
--- little toward them, so steering moves the items across the screen instead of swinging the view.
--- High and far enough back to keep items steered out to the sides in sight
+-- It follows them down the slide, up and down, and across as they're steered, sliding sideways with
+-- them instead of turning toward them, so it always looks straight down the slide
 local FOLLOW_DISTANCE = 36 -- Studs
-local FOLLOW_PITCH = math.rad(50)
--- Share of the way across to the items that the camera looks, from the slide's middle. 0 looks
--- straight down the slide; 1 looks right at them
-local SIDE_LOOK = 0.2
+local FOLLOW_PITCH = math.rad(40)
+-- Studs down the slide past the items that the camera looks, so it looks along the slide ahead of
+-- them instead of down on them
+local LOOK_AHEAD = 6
+-- How quickly the camera slides across after the items; higher is snappier. It trails them a little,
+-- so steering still moves them across the screen for a moment before the camera catches up
+local SIDE_SHARPNESS = 4
 local WALL_GAP = 1 -- Studs the camera keeps in front of a wall between it and the items
 -- How quickly the camera catches up with where it should be; higher is snappier. The view turns
 -- faster than the camera moves, so the items stay in frame while it glides after them
@@ -123,6 +128,9 @@ type Drop = {
 	Speed: number, -- The owner's Sliding Speed upgrade, which multiplies the pay
 	SlideSpeed: number, -- Studs per second items are held to down the slide
 	Focus: Vector3?, -- What the camera's following, on the slide's middle line. Nil until the first frame
+	-- Studs across from that line that the camera's slid after the pack, to the right of the way down.
+	-- Nil until the first frame
+	Side: number?,
 	-- Finds the walls between the camera and the items and the ground under the items, but not the items
 	WorldRay: RaycastParams,
 }
@@ -334,6 +342,7 @@ local function followItems(current: Drop, dt: number)
 	local steer = HudController.GetSteer()
 	local right = current.Direction:Cross(Vector3.yAxis)
 	local grip = 1 - math.exp(-SIDE_GRIP * dt)
+	local sideScale = current.SlideSpeed / Drops.SLIDE_SPEED
 	for _, dropped in active do
 		local part = dropped.Part
 		local itemVelocity = part.AssemblyLinearVelocity
@@ -357,7 +366,7 @@ local function followItems(current: Drop, dt: number)
 			local apart = (center - part.Position):Dot(right)
 			local outside = math.max(math.abs(apart) - PACK_RADIUS, 0) * math.sign(apart)
 			local pull = math.clamp(outside * PACK_PULL, -MAX_PACK_PULL, MAX_PACK_PULL)
-			local target = steer * STEER_SPEED + pull
+			local target = (steer * STEER_SPEED + pull) * sideScale
 			if ground then
 				local tilt = ground.Normal:Dot(right) -- Above 0 where the ground falls away to the right
 				local steepness = math.clamp((math.abs(tilt) - FLAT_TILT) / (STEEP_TILT - FLAT_TILT), 0, 1)
@@ -395,13 +404,23 @@ local function followItems(current: Drop, dt: number)
 	end
 	current.Focus = focus
 
+	-- Across after the pack. Both the camera and where it looks move across by the same amount, so it
+	-- slides sideways instead of turning, however differently fast the two catch up with their goals
+	local lastSide = current.Side or packSide
+	local side = lastSide + (packSide - lastSide) * (1 - math.exp(-SIDE_SHARPNESS * dt))
+	current.Side = side
+	local shift = right * (side - lastSide)
+	cameraPosition += shift
+	cameraLookAt += shift
+	local followed = focus + right * side
+
 	local behind = -current.Direction
 	local offset = (behind * math.cos(FOLLOW_PITCH) + Vector3.yAxis * math.sin(FOLLOW_PITCH)) * FOLLOW_DISTANCE
 	-- In front of any wall that would come between, like the funnel's
-	local hit = workspace:Raycast(focus, offset, current.WorldRay)
+	local hit = workspace:Raycast(followed, offset, current.WorldRay)
 	local distance = if hit then math.max(hit.Distance - WALL_GAP, WALL_GAP) else FOLLOW_DISTANCE
-	goalPosition = focus + offset.Unit * distance
-	goalLookAt = focus + right * packSide * SIDE_LOOK
+	goalPosition = followed + offset.Unit * distance
+	goalLookAt = followed + current.Direction * LOOK_AHEAD
 
 	-- With streaming, parts of the slide far from the character may not be loaded on this client yet
 	if os.clock() - lastStreamRequest > STREAM_INTERVAL then
@@ -541,6 +560,7 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Speed = speed,
 		SlideSpeed = Drops.GetSlideSpeed(speed),
 		Focus = nil,
+		Side = nil,
 		WorldRay = worldRay,
 	}
 	drop = current

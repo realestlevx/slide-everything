@@ -3,6 +3,7 @@ local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -25,10 +26,12 @@ local DROP_VIEW_PIECES =
 -- The sequences play side by side, each step once the one before has finished: in this order into
 -- the drop view, and backwards out of it. A step's pieces move together
 local SEQUENCES = {
-	{ { "BaseButtons" }, { "Spectate" } },
 	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right", "Time", "Multiplier" } },
 	{ { "Cash", "Gem" } },
 }
+-- The top bar holds one of these at a time: the base buttons, the button back to the base once the
+-- player's left it, or the drop view's Spectate. Whichever is leaving slides out before the next comes in
+local TOP_PIECES = { "BaseButtons", "OutsideBaseButtons", "Spectate" }
 
 -- The clock on the timer rocks from side to side
 local ICON_TILT = 5 -- Degrees either way
@@ -68,6 +71,14 @@ local MULTIPLIER_UP_MAX_RISE = 0.55
 local MULTIPLIER_UP_MIN_TIME = 1 -- Seconds they take
 local MULTIPLIER_UP_MAX_TIME = 1.6
 local MULTIPLIER_UP_TILT = 20 -- Degrees they may start turned, and turn further, either way
+-- It plays SoundService.SFX.MultiplierUp too, a step higher for each wall the drop has passed
+local MULTIPLIER_UP_SOUND_NAME = "MultiplierUp"
+local MULTIPLIER_UP_MIN_PITCH = 0.8 -- PlaybackSpeed at the first wall
+local MULTIPLIER_UP_PITCH_STEP = 0.1
+local MULTIPLIER_UP_MAX_PITCH = 1.5
+-- And MultiplierUp's Vignette fades in, a random color of the rainbow, and back out
+local VIGNETTE_IN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local VIGNETTE_OUT_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
 local STEER_ACTION = "SteerItems"
 local STEER_KEYS: { [Enum.KeyCode]: number } = { -- Key -> the side it steers to, -1 left and 1 right
@@ -105,10 +116,14 @@ local valueRest = UDim2.new() -- Where it sits when it isn't shaking
 local valueScale: UIScale? = nil
 local valueGradient: UIGradient? = nil
 local multiplierUpTemplate: ImageLabel? = nil
+local vignette: ImageLabel? = nil
+local vignetteTransparency = 0 -- As laid out in Studio, which it fades in to
 local nextShakeAt = 0
 local random = Random.new()
 local dropView = false
+local outsideBase = false
 local switches = 0 -- Bumped on every switch, so steps left over from the one before stop
+local topSwitches = 0 -- The same, for the top bar, which also changes as the player leaves the base
 
 local keysHeld: { [Enum.KeyCode]: boolean } = {}
 local stickX = 0
@@ -116,15 +131,21 @@ local pointers: { [InputObject]: number } = {} -- Touches and clicks holding a s
 local pressButton: { [number]: (held: boolean) -> () } = {} -- Side -> holds its button down or lets go
 
 local exitRequested = Instance.new("BindableEvent")
+local homeRequested = Instance.new("BindableEvent")
 
 local HudController = {
 	-- Fires when the player asks to leave the drop view with its Exit button
 	ExitRequested = exitRequested.Event,
+	-- Fires when the player asks to go back to their base with the top bar's Base button
+	HomeRequested = homeRequested.Event,
 }
 
 local function isShown(name: string): boolean
 	if name == "Multiplier" and multiplier <= 1 then
 		return false
+	end
+	if not dropView and (name == "BaseButtons" or name == "OutsideBaseButtons") then
+		return outsideBase == (name == "OutsideBaseButtons")
 	end
 	return (DROP_VIEW_PIECES[name] == true) == dropView
 end
@@ -220,6 +241,31 @@ local function playSequence(sequence: { { string } }, switch: number)
 	end
 end
 
+local function playTop(switch: number)
+	local duration = 0
+	for _, name in TOP_PIECES do
+		if not isShown(name) then
+			duration = math.max(duration, move(name, false))
+		end
+	end
+	if duration > 0 then
+		task.wait(duration)
+	end
+	if topSwitches ~= switch then
+		return
+	end
+	for _, name in TOP_PIECES do
+		if isShown(name) then
+			move(name, true)
+		end
+	end
+end
+
+local function refreshTop()
+	topSwitches += 1
+	task.spawn(playTop, topSwitches)
+end
+
 local function isHeld(side: number): boolean
 	if stickX * side > STICK_DEADZONE then
 		return true
@@ -302,7 +348,17 @@ function HudController.SetDropView(on: boolean)
 	for _, sequence in SEQUENCES do
 		task.spawn(playSequence, sequence, switches)
 	end
+	refreshTop()
 	setSteering(on)
+end
+
+-- Whether the player has left their base, which swaps the top bar's buttons for the one back to it
+function HudController.SetOutsideBase(outside: boolean)
+	if outside == outsideBase then
+		return
+	end
+	outsideBase = outside
+	refreshTop()
 end
 
 -- Where the player is steering their dropping items: -1 left, 1 right, 0 straight on
@@ -425,6 +481,38 @@ local function emitMultiplierUp()
 	end
 end
 
+-- Its own copy, so one still playing isn't cut off
+local function playMultiplierUp(walls: number)
+	local sfx = SoundService:FindFirstChild("SFX")
+	local sound = sfx and sfx:FindFirstChild(MULTIPLIER_UP_SOUND_NAME)
+	if not (sound and sound:IsA("Sound")) then
+		return
+	end
+	local copy = sound:Clone()
+	copy.PlaybackSpeed =
+		math.min(MULTIPLIER_UP_MIN_PITCH + (walls - 1) * MULTIPLIER_UP_PITCH_STEP, MULTIPLIER_UP_MAX_PITCH)
+	copy.Parent = sfx
+	copy.Ended:Connect(function()
+		copy:Destroy()
+	end)
+	copy:Play()
+end
+
+local function flashVignette()
+	local image = vignette
+	if not (image and image:IsDescendantOf(PlayerGui)) then
+		return
+	end
+	image.ImageColor3 = Color3.fromHSV(random:NextNumber(), 1, 1)
+	local fadeIn = TweenService:Create(image, VIGNETTE_IN_INFO, { ImageTransparency = vignetteTransparency })
+	fadeIn.Completed:Connect(function(state: Enum.PlaybackState)
+		if state == Enum.PlaybackState.Completed then
+			TweenService:Create(image, VIGNETTE_OUT_INFO, { ImageTransparency = 1 }):Play()
+		end
+	end)
+	fadeIn:Play()
+end
+
 -- The best multiplier the drop's items have reached, and how many walls that multiply they've
 -- passed. It slides in once it's past 1x, and pops bigger with every wall
 function HudController.SetDropMultiplier(value: number, walls: number)
@@ -435,6 +523,8 @@ function HudController.SetDropMultiplier(value: number, walls: number)
 	if walls ~= multiplierWalls then
 		if walls > multiplierWalls then
 			emitMultiplierUp()
+			playMultiplierUp(walls)
+			flashVignette()
 		end
 		multiplierWalls = walls
 		if valueScale then
@@ -493,20 +583,28 @@ end
 local function bindTop(gui: Instance)
 	local main = gui:WaitForChild("Frame"):WaitForChild("Main")
 	local baseButtons = main:WaitForChild("BaseButtons") :: GuiObject
+	local outsideButtons = main:WaitForChild("OutsideBaseButtons") :: GuiObject
+	local homeButton = outsideButtons:WaitForChild("BaseButton") :: GuiButton
 	local spectate = main:WaitForChild("Spectate") :: GuiObject
 	local exitButton = spectate:WaitForChild("ExitControlButton") :: GuiButton
 
-	for _, button in baseButtons:GetChildren() do
-		if button:IsA("GuiButton") then
-			ButtonController.Animate(button)
+	for _, holder in { baseButtons, outsideButtons } do
+		for _, button in holder:GetChildren() do
+			if button:IsA("GuiButton") then
+				ButtonController.Animate(button)
+			end
 		end
 	end
 	ButtonController.Animate(exitButton)
 	exitButton.Activated:Connect(function()
 		exitRequested:Fire()
 	end)
+	homeButton.Activated:Connect(function()
+		homeRequested:Fire()
+	end)
 
 	addPiece("BaseButtons", baseButtons, "Top")
+	addPiece("OutsideBaseButtons", outsideButtons, "Top")
 	addPiece("Spectate", spectate, "Top")
 end
 
@@ -553,8 +651,14 @@ local function bindInventory(gui: Instance)
 	addPiece("Inventory", gui:WaitForChild("Main") :: GuiObject, "Bottom")
 end
 
+-- The vignette's hidden until a wall flashes it
 local function bindMultiplierUp(gui: Instance)
-	multiplierUpTemplate = gui:WaitForChild("Main"):WaitForChild("Template") :: ImageLabel
+	local main = gui:WaitForChild("Main")
+	multiplierUpTemplate = main:WaitForChild("Template") :: ImageLabel
+	local image = main:WaitForChild("Vignette") :: ImageLabel
+	vignetteTransparency = image.ImageTransparency
+	image.ImageTransparency = 1
+	vignette = image
 end
 
 -- Found wherever they are in the gui, so the frames around them can change

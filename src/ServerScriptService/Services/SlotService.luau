@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
+local Floors = require(ReplicatedStorage.Shared.Floors)
 local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
@@ -94,6 +95,11 @@ local function spawnSlots(place: Folder)
 			slot:SetAttribute(name, value)
 		end
 		slot:SetAttribute("Floor", floor)
+		-- A later floor's markers carry floor 1's prices, which go up from there (see Floors)
+		local price = marker:GetAttribute("Price")
+		if typeof(price) == "number" then
+			slot:SetAttribute("Price", math.round(price * Floors.GetSlotPriceMultiplier(floor)))
+		end
 		for _, billboardName in DESIGN_BILLBOARDS do
 			local billboard = slot:FindFirstChild(billboardName, true)
 			if billboard and billboard:IsA("BillboardGui") then
@@ -132,6 +138,7 @@ local function show(slot: Model, owned: Items.OwnedItem?)
 		return
 	end
 
+	-- At the item's own size: every client grows it to its level's (see SlotController)
 	local display = Rolling.CreateDisplay(item, slotPart)
 	display.Name = SLOT_ITEM_NAME
 	display.Parent = slot

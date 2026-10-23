@@ -1,6 +1,8 @@
 local Places = {
 	-- The part in a slot that its item floats at, holding the place prompt and the billboard
 	SLOT_PART = "Slot_Place",
+	-- On each stage, the name of the place whose slide it's on (see StageService)
+	STAGE_PLACE_ATTRIBUTE = "Place",
 }
 
 local function isPlace(instance: Instance): boolean
@@ -96,6 +98,11 @@ function Places.GetSlots(place: Folder): { Model }
 		return Places.GetSlotNumber(a) < Places.GetSlotNumber(b)
 	end)
 	return slots
+end
+
+-- The slide is built of stages, Models in Workspace named Stage<N>, one after another down it
+function Places.IsStage(instance: Instance): boolean
+	return instance:IsA("Model") and instance.Parent == workspace and instance.Name:match("^Stage%d+$") ~= nil
 end
 
 return Places

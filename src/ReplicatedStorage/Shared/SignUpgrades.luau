@@ -44,12 +44,13 @@ local function getLuckLevels(): { Level }
 	return levels
 end
 
--- 1x, 1.1x, 1.2x and so on up to 3x. Drop pay is multiplied by it, so a drop at 3x pays 30 seconds of
--- income instead of 10. 150 for 1.1x, then 1.55x more each level, about 620K for 3x. Values are made
--- from whole tenths so they show as "1.1x", not "1.1000000000000001x"
-local SPEED_STEPS = 20
-local SPEED_PRICE = 150 -- What 1.1x costs
-local SPEED_PRICE_GROWTH = 1.55
+-- 1x, 1.1x, 1.2x and so on up to 5x. Drop pay is multiplied by it, so a drop at 5x pays 50 seconds of
+-- income instead of 10. 300 for 1.1x, then 1.6x more each level: about 2K for 1.5x, 21K for 2x, 2.3M
+-- for 3x, 250M for 4x and 27B for 5x. Values are made from whole tenths so they show as "1.1x", not
+-- "1.1000000000000001x"
+local SPEED_STEPS = 40
+local SPEED_PRICE = 300 -- What 1.1x costs
+local SPEED_PRICE_GROWTH = 1.6
 
 local function getSpeedLevels(): { Level }
 	local prices = getPrices({ SPEED_PRICE }, SPEED_PRICE_GROWTH, SPEED_STEPS)

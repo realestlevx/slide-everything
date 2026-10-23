@@ -5,6 +5,10 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Places = require(ReplicatedStorage.Shared.Places)
 
 local SPAWN_OFFSET = Vector3.new(0, 3, 0)
+-- A base's ground is everything in its place's Bottoms folder. Its box goes on the place as the
+-- BaseMin and BaseMax attributes, and where its players spawn as SpawnCFrame, so clients can tell
+-- when their player has left the base and send them back even while those parts are streamed out
+local BASE_FOLDER_NAME = "Bottoms"
 
 local places: { Folder } = {}
 local owners: { [Folder]: Player } = {}
@@ -45,9 +49,38 @@ local function loadHeadshot(place: Folder, player: Player)
 	end
 end
 
+local function getSpawn(place: Folder): CFrame
+	return (place :: any).Spawn.CFrame + SPAWN_OFFSET
+end
+
 local function teleportToPlace(character: Model, place: Folder)
 	character:WaitForChild("HumanoidRootPart")
-	character:PivotTo((place :: any).Spawn.CFrame + SPAWN_OFFSET)
+	character:PivotTo(getSpawn(place))
+end
+
+local function measureBase(place: Folder)
+	place:SetAttribute("SpawnCFrame", getSpawn(place))
+
+	local folder = place:FindFirstChild(BASE_FOLDER_NAME)
+	local parts = if folder then folder:GetDescendants() else {}
+	local low, high = Vector3.one * math.huge, -Vector3.one * math.huge
+	for _, part in parts do
+		if part:IsA("BasePart") then
+			-- Half the box around the part, however it's turned
+			local cframe, half = part.CFrame, part.Size / 2
+			local extent = (cframe.RightVector * half.X):Abs()
+				+ (cframe.UpVector * half.Y):Abs()
+				+ (cframe.LookVector * half.Z):Abs()
+			low = low:Min(cframe.Position - extent)
+			high = high:Max(cframe.Position + extent)
+		end
+	end
+	if low.X > high.X then
+		warn(`{place.Name} has no parts in a {BASE_FOLDER_NAME} folder, so its owner can't tell when they've left it`)
+		return
+	end
+	place:SetAttribute("BaseMin", low)
+	place:SetAttribute("BaseMax", high)
 end
 
 local function getRandomFreePlace(): Folder?
@@ -113,6 +146,7 @@ function PlaceService.Start()
 	for _, place in places do
 		defaultImages[place] = (getBillboard(place) :: any).ImageLabel.Image
 		getBillboard(place).Enabled = false
+		measureBase(place)
 	end
 
 	for _, player in Players:GetPlayers() do

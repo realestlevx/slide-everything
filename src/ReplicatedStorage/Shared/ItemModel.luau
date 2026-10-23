@@ -135,6 +135,13 @@ function ItemModel.GetScale(root: BasePart): number
 	return getRecord(root).Scale
 end
 
+-- How tall a part of this size stands when turned this way. Turning it about the Y axis, as
+-- floating does, doesn't change it
+function ItemModel.GetHeight(rotation: CFrame, size: Vector3): number
+	local up = rotation:VectorToObjectSpace(Vector3.yAxis)
+	return math.abs(up.X) * size.X + math.abs(up.Y) * size.Y + math.abs(up.Z) * size.Z
+end
+
 local function applyScale(root: BasePart, record: Record)
 	local scale = record.Scale * record.Focus
 	root.Size = record.Size * scale
