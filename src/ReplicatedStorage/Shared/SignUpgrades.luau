@@ -78,6 +78,23 @@ local function getTimeLevels(): { Level }
 	return levels
 end
 
+-- 1x, 1.1x, 1.2x and so on up to 6x. What it's gone up by is added to every multiplier wall on the
+-- slide: at 1.1x a 1.1x wall pays 1.2x. Not on the economy sheet yet, so the prices are a
+-- placeholder: 25K for 1.1x, then 1.5x more each level, about 971K for 2x, 57M for 3x, 3.3B for 4x,
+-- 191B for 5x and 11T for 6x. Values are made from whole tenths, like Sliding Speed's
+local SLIDE_STEPS = 50
+local SLIDE_PRICE = 25000 -- What 1.1x costs
+local SLIDE_PRICE_GROWTH = 1.5
+
+local function getSlideLevels(): { Level }
+	local prices = getPrices({ SLIDE_PRICE }, SLIDE_PRICE_GROWTH, SLIDE_STEPS)
+	local levels: { Level } = { { Value = 1 } }
+	for step = 1, SLIDE_STEPS do
+		table.insert(levels, { Value = (10 + step) / 10, Price = prices[step] })
+	end
+	return levels
+end
+
 -- 1 stand, then one more each level up to 6, at the economy sheet's roll slot prices
 local ROLL_SLOT_PRICES = { 800, 10000, 250000, 2000000, 51000000 } -- What stands 2 to 6 cost
 
@@ -116,6 +133,12 @@ local SignUpgrades = {
 			Frame = "Time_Frame",
 			Suffix = "s",
 			Levels = getTimeLevels(),
+		},
+		-- Raises every multiplier wall's multiplier, for this player only; see Drops.GetMultiplier
+		Slide = {
+			Frame = "Slide_Frame",
+			Suffix = "x",
+			Levels = getSlideLevels(),
 		},
 	} :: { [string]: Upgrade },
 }

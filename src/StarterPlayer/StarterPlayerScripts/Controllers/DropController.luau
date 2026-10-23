@@ -54,11 +54,17 @@ local MAX_PACK_PULL = 8 -- Studs per second
 local FLAT_TILT = 0.15
 local STEEP_TILT = 0.35
 -- Items behind the front one, like those dropped from a higher floor that land later or ones held up
--- by something they hit, slide faster until they've caught up with it. Gently, so they drift back
--- into the pack instead of shooting forward
-local CATCH_UP_PULL = 1 -- Studs per second faster for every stud further back than PACK_RADIUS
-local MAX_CATCH_UP = 0.3 -- Share of the slide speed
+-- by something they hit, slide faster until they've caught up with it. The further back, the faster:
+-- each one goes fast enough to close its gap in about CATCH_UP_TIME, so one twice as far back goes
+-- twice as much faster. Near the pack that's only a little, so they drift back into it instead of
+-- shooting forward, and they slow down as the gap closes
+local CATCH_UP_TIME = 1.5 -- Seconds
+local MAX_CATCH_UP = 1.5 -- Share of the slide speed, so up to 2.5x as fast
 local CATCH_UP_EASE = 2 -- How quickly an item takes up a faster speed; higher is sooner
+-- Seconds of sliding at the slide speed. An item on the slide this far behind the front one, like one
+-- held up for a long while, is too far gone to catch up, so it finishes where it is. It keeps what it
+-- made up to there and makes nothing more
+local LEFT_BEHIND = 4
 -- Items stay the way up they were dropped instead of tumbling, tilted to lie along the ground under them
 local TILT_RESPONSIVENESS = 25
 -- Studs below an item at its own size that the ground it lies along is looked for. An upgraded item
@@ -86,11 +92,18 @@ local LOOK_AHEAD = 6
 -- so steering still moves them across the screen for a moment before the camera catches up
 local SIDE_SHARPNESS = 4
 local WALL_GAP = 1 -- Studs the camera keeps in front of a wall between it and the items
+-- Trailing behind where it should be, the camera can cut into the ground, like the slide behind the
+-- items. Ground that comes between it and the items keeps it in front, so it never ends up underneath.
+-- Anything facing up more than this, as the up part of the way it faces, counts as ground
+local GROUND_FACING = 0.5
 -- How quickly the camera catches up with where it should be; higher is snappier. The view turns
 -- faster than the camera moves, so the items stay in frame while it glides after them
 local MOVE_SHARPNESS = 4
 local LOOK_SHARPNESS = 10
 local RETURN_SHARPNESS = 6
+-- Gliding back up to the player after a drop, the camera climbs faster than it comes across, so it
+-- rises off the slide before it reaches the ground at the top instead of cutting through its edge
+local RISE_SHARPNESS = 12
 -- When the items up front finish and the ones left are further back, the camera glides back to them
 -- still looking down the slide, instead of turning round to look back at them
 local BACK_SPEED = 12 -- Studs per second
@@ -123,6 +136,9 @@ type DroppedItem = {
 	StillFor: number, -- Seconds it has been at rest (see STOPPED_SPEED)
 	Probe: number, -- Studs below it that the ground is looked for (see GROUND_PROBE)
 	GroundY: number, -- Height of the last ground it was over, which FALL_LIMIT is measured from
+	-- Height of the slide where it was last over it. The camera doesn't follow it any lower, so it
+	-- stays up on the slide when an item goes off it. -inf until it reaches the slide
+	SlideY: number,
 	Steerable: boolean, -- Has reached the slide
 	Done: boolean, -- Its run is over and it's gone to the collect pad; the camera stops following it
 }
@@ -143,7 +159,9 @@ type Drop = {
 	Ending: boolean,
 	Speed: number, -- The owner's Sliding Speed upgrade, which multiplies the pay
 	SlideSpeed: number, -- Studs per second items are held to down the slide
+	Slide: number, -- The owner's Slide upgrade, which raises every wall's multiplier
 	Focus: Vector3?, -- What the camera's following, on the slide's middle line. Nil until the first frame
+	Followed: Vector3?, -- Focus, slid across after the pack as the camera is. Nil until the first frame
 	-- Studs across from that line that the camera's slid after the pack, to the right of the way down.
 	-- Nil until the first frame
 	Side: number?,
@@ -260,6 +278,7 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		StillFor = 0,
 		Probe = GROUND_PROBE * size,
 		GroundY = current.StartY,
+		SlideY = -math.huge,
 		Steerable = false,
 		Done = false,
 	}
@@ -268,7 +287,7 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		part.Touched:Connect(function(hit)
 			if not dropped.Done and not dropped.TouchedWalls[hit] and Drops.IsWall(hit) then
 				dropped.TouchedWalls[hit] = true
-				Drops.AddWall(dropped.Gates, hit, current.Start, current.Direction)
+				Drops.AddWall(dropped.Gates, hit, current.Start, current.Direction, current.Slide)
 			end
 		end)
 	end
@@ -331,10 +350,10 @@ local function endDrop()
 	-- The camera glides back on its own from here
 end
 
--- Once the drop's time is up, every item finishes where it is. Before that, items that come to rest
--- or go off the slide finish where they are, and the rest are held to the slide speed down the slide,
--- lie along the ground and, once on the slide, go where they're steered as a pack. The camera aims at
--- them, and once none are left, the drop ends after a moment
+-- Once the drop's time is up, every item finishes where it is. Before that, items that come to rest,
+-- go off the slide or are left far behind finish where they are, and the rest are held to the slide
+-- speed down the slide, lie along the ground and, once on the slide, go where they're steered as a
+-- pack. The camera aims at them, and once none are left, the drop ends after a moment
 local function followItems(current: Drop, dt: number)
 	local timeUp = os.clock() >= current.EndsAt
 	local active: { DroppedItem } = {}
@@ -370,17 +389,29 @@ local function followItems(current: Drop, dt: number)
 		return
 	end
 
-	local center = Vector3.zero
 	local lead = -math.huge -- Studs down the slide that the front item on it has got
 	for _, dropped in active do
 		local position = dropped.Part.Position
-		center += position
 		if not dropped.Steerable then
 			local ground = workspace:Raycast(position, -Vector3.yAxis * dropped.Probe, current.WorldRay)
 			dropped.Steerable = ground ~= nil and ground.Instance.Name == SLIDE_NAME
 		end
 		if dropped.Steerable then
 			lead = math.max(lead, (position - current.Start):Dot(current.Direction))
+		end
+	end
+	-- Items left too far behind the front one finish where they are. The front one never is, so some
+	-- are always left. The pack's middle counts one that's gone off the slide as still up on it
+	local center = Vector3.zero
+	for index = #active, 1, -1 do
+		local dropped = active[index]
+		local position = dropped.Part.Position
+		local behind = lead - (position - current.Start):Dot(current.Direction)
+		if dropped.Steerable and behind > current.SlideSpeed * LEFT_BEHIND then
+			finishItem(current, dropped)
+			table.remove(active, index)
+		else
+			center += Vector3.new(position.X, math.max(position.Y, dropped.SlideY), position.Z)
 		end
 	end
 	center /= #active
@@ -403,7 +434,7 @@ local function followItems(current: Drop, dt: number)
 		local catchUp = 0
 		if dropped.Steerable then
 			local behind = lead - (part.Position - current.Start):Dot(current.Direction)
-			catchUp = math.clamp((behind - PACK_RADIUS) * CATCH_UP_PULL, 0, current.SlideSpeed * MAX_CATCH_UP)
+			catchUp = math.clamp((behind - PACK_RADIUS) / CATCH_UP_TIME, 0, current.SlideSpeed * MAX_CATCH_UP)
 		end
 		local maxSpeed = current.SlideSpeed + catchUp
 		if forward.Magnitude > maxSpeed then
@@ -439,6 +470,9 @@ local function followItems(current: Drop, dt: number)
 			else dropped.Rotation
 		if ground then
 			dropped.GroundY = ground.Position.Y
+			if ground.Instance.Name == SLIDE_NAME then
+				dropped.SlideY = ground.Position.Y
+			end
 		end
 	end
 
@@ -464,6 +498,7 @@ local function followItems(current: Drop, dt: number)
 	cameraPosition += shift
 	cameraLookAt += shift
 	local followed = focus + right * side
+	current.Followed = followed
 
 	local behind = -current.Direction
 	local offset = (behind * math.cos(FOLLOW_PITCH) + Vector3.yAxis * math.sin(FOLLOW_PITCH)) * FOLLOW_DISTANCE
@@ -492,8 +527,23 @@ local function onRenderStep(dt: number)
 
 	local moveSharpness = if current then MOVE_SHARPNESS else RETURN_SHARPNESS
 	local lookSharpness = if current then LOOK_SHARPNESS else RETURN_SHARPNESS
+	local lastPosition = cameraPosition
 	cameraPosition = cameraPosition:Lerp(goalPosition, 1 - math.exp(-moveSharpness * dt))
 	cameraLookAt = cameraLookAt:Lerp(goalLookAt, 1 - math.exp(-lookSharpness * dt))
+	-- Gliding back up to the player, it climbs ahead of coming across (see RISE_SHARPNESS)
+	if not current and goalPosition.Y > lastPosition.Y then
+		local y = lastPosition.Y + (goalPosition.Y - lastPosition.Y) * (1 - math.exp(-RISE_SHARPNESS * dt))
+		cameraPosition = Vector3.new(cameraPosition.X, y, cameraPosition.Z)
+	end
+	-- Never under the ground the items are on (see GROUND_FACING)
+	if current and current.Followed then
+		local followed = current.Followed
+		local toCamera = cameraPosition - followed
+		local hit = workspace:Raycast(followed, toCamera, current.WorldRay)
+		if hit and hit.Normal.Y > GROUND_FACING then
+			cameraPosition = followed + toCamera.Unit * math.max(hit.Distance - WALL_GAP, WALL_GAP)
+		end
+	end
 
 	-- Back where it started: handed back to the normal camera, which carries on from there
 	if
@@ -608,7 +658,9 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Ending = false,
 		Speed = speed,
 		SlideSpeed = Drops.GetSlideSpeed(speed),
+		Slide = getUpgrade(place, "Slide"),
 		Focus = nil,
+		Followed = nil,
 		Side = nil,
 		WorldRay = worldRay,
 	}

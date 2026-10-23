@@ -78,9 +78,17 @@ function Drops.GetSlideLine(floor: BasePart): (Vector3, Vector3)
 	return floor.Position, Vector3.new(direction.X, 0, direction.Z).Unit
 end
 
+-- What a multiplier wall pays for a player, its Multiplier attribute plus what their Slide upgrade
+-- (see SignUpgrades) has gone up by: at Slide 1.3x a 1.1x wall pays 1.4x. Rounded to hundredths, so
+-- it shows as "1.4x", not "1.4000000000000001x"
+function Drops.GetMultiplier(wall: BasePart, slide: number): number
+	local multiplier = wall:GetAttribute(Drops.MULTIPLIER_ATTRIBUTE) :: number
+	return math.round((multiplier + slide - 1) * 100) / 100
+end
+
 -- Adds the part to walls if it's a multiplier wall down the slide from start, keeping them nearest
--- first, as Measure needs them
-function Drops.AddWall(walls: { Wall }, part: BasePart, start: Vector3, direction: Vector3)
+-- first, as Measure needs them. Slide is the owner's Slide upgrade
+function Drops.AddWall(walls: { Wall }, part: BasePart, start: Vector3, direction: Vector3, slide: number)
 	local along = (part.Position - start):Dot(direction)
 	if not Drops.IsWall(part) or along <= 0 then
 		return
@@ -89,7 +97,7 @@ function Drops.AddWall(walls: { Wall }, part: BasePart, start: Vector3, directio
 	while index > 1 and walls[index - 1].Along > along do
 		index -= 1
 	end
-	table.insert(walls, index, { Along = along, Multiplier = part:GetAttribute(Drops.MULTIPLIER_ATTRIBUTE) :: number })
+	table.insert(walls, index, { Along = along, Multiplier = Drops.GetMultiplier(part, slide) })
 end
 
 -- A run that got distance studs down the slide, as studs at 1x: each stud counts as many times as

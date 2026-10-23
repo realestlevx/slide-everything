@@ -36,7 +36,8 @@ type Drop = {
 	-- The owner's Sliding Speed and Sliding Time when it started, so buying more mid-drop doesn't count
 	Speed: number,
 	Time: number,
-	Walls: { Drops.Wall }, -- Down the place's slide, nearest first
+	-- Down the place's slide, nearest first, at the owner's Slide upgrade when it started
+	Walls: { Drops.Wall },
 	Items: { [string]: DroppedItem }, -- Slot key -> what was in it
 }
 
@@ -84,8 +85,9 @@ local function onDrop(place: Folder, player: Player)
 	local floor = place:FindFirstChild(DROP_FLOOR_NAME)
 	if floor and floor:IsA("BasePart") then
 		local start, direction = Drops.GetSlideLine(floor)
+		local slide = SignUpgradeService.GetValue(player, "Slide")
 		for wall in walls do
-			Drops.AddWall(slideWalls, wall, start, direction)
+			Drops.AddWall(slideWalls, wall, start, direction, slide)
 		end
 	end
 	drops[player] = {

@@ -1,11 +1,16 @@
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
 local Places = require(ReplicatedStorage.Shared.Places)
+local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 
--- The multiplier walls across the slide. Each one's text shows its Multiplier attribute, so it can't
--- say something different from what the wall pays. They're tall and wide enough to fill the view as
+local LocalPlayer = Players.LocalPlayer
+
+-- The multiplier walls across the slide. Each one's text shows its Multiplier attribute plus this
+-- player's Slide upgrade, so it can't say something different from what the wall pays them, and
+-- everyone sees the walls at their own multipliers. They're tall and wide enough to fill the view as
 -- the camera nears them, so they fade out as it closes in, text and all, and back in once it's gone by.
 -- Walls with SideToSide on glide across the slide (see Drops.GetWallSide). Only this client moves
 -- them; the server's copy stays where it was built
@@ -74,16 +79,33 @@ local function getFade(part: BasePart, from: Vector3): number
 	return math.clamp((FADE_START - distance) / (FADE_START - FADE_END), 0, 1)
 end
 
+-- This player's Slide upgrade, kept by the server on the place they own. 1x without a place
+local function getSlide(): number
+	for _, place in Places.GetAll() do
+		if place:GetAttribute("OwnerUserId") == LocalPlayer.UserId then
+			local level = place:GetAttribute("SlideLevel")
+			return SignUpgrades.GetValue("Slide", if typeof(level) == "number" then level else 1)
+		end
+	end
+	return 1
+end
+
 -- Written the way the drop HUD shows the multiplier
 local function showMultiplier(part: BasePart, wall: Wall)
-	local multiplier = part:GetAttribute(Drops.MULTIPLIER_ATTRIBUTE)
-	if typeof(multiplier) ~= "number" then
+	if not Drops.IsWall(part) then
 		return
 	end
+	local multiplier = Drops.GetMultiplier(part, getSlide())
 	for label in wall.Labels do
 		if label.Name == VALUE_LABEL_NAME then
 			label.Text = `{multiplier}x`
 		end
+	end
+end
+
+local function showAll()
+	for part, wall in walls do
+		showMultiplier(part, wall)
 	end
 end
 
@@ -173,6 +195,11 @@ function MultiplierWallController.Start()
 	end
 	workspace.DescendantAdded:Connect(track)
 	workspace.DescendantRemoving:Connect(untrack)
+	-- The walls' text changes with this player's Slide upgrade, and when they claim or leave a place
+	for _, place in Places.GetAll() do
+		place:GetAttributeChangedSignal("OwnerUserId"):Connect(showAll)
+		place:GetAttributeChangedSignal("SlideLevel"):Connect(showAll)
+	end
 	-- After the drop camera has moved for the frame, so walls fade by where it is now
 	RunService:BindToRenderStep(STEP_NAME, Enum.RenderPriority.Camera.Value + 2, onRenderStep)
 end
