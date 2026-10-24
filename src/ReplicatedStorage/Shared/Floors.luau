@@ -3,19 +3,16 @@
 -- copy of the Floor<N> model in ServerStorage, built where the place's Floor<N>_Position part is, and
 -- the markers for its slots sit in the place's Floor<N>_Slot_Positions folder
 local Floors = {
-	-- What each floor costs. Everyone has floor 1 from the start. A floor needs its model and its
-	-- marker to be sold. Floor 2 is priced like one more slot after floor 1's last ($15M), each of
-	-- which costs about 3x the one before
+	-- What each floor costs, from the economy sheet. Everyone has floor 1 from the start. A floor
+	-- needs its model and its marker to be sold. Each floor's slots climb evenly from its own price
+	-- to the next floor's: floor 1's last ones go $85k to $400k before floor 2's $700k, and floor 2's
+	-- go $1M to $42M (about 1.45x each, its first comes free with it) toward floor 3's $61M
 	Prices = {
-		[2] = 45000000,
+		[2] = 700000,
 	} :: { [number]: number },
-	-- A later floor's slot markers carry copies of floor 1's prices ($100, $300, ... $15M), so its
-	-- slots cost those times this instead, and the climb carries on from the floor's price rather
-	-- than starting over: floor 2's second slot is $100 x 1.35M = $135M, 3x the floor (its first
-	-- comes free with it), up to $20.25T for its twelfth
-	SlotPriceMultipliers = {
-		[2] = 1350000,
-	} :: { [number]: number },
+	-- For a floor whose slot markers are left as copies of an earlier floor's prices: its slots cost
+	-- those times this instead. Floor 2's markers carry their own prices, so it has none
+	SlotPriceMultipliers = {} :: { [number]: number },
 }
 
 -- The floor's model in ServerStorage, and its copy in a place once it's built

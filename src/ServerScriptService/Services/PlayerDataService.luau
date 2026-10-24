@@ -12,6 +12,9 @@ local PROFILE_TEMPLATE = {
 	MoneyPerSecond = 0,
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
 	Slots = {} :: { [string]: string }, -- Slot key (see Places.GetSlotKey) -> Uid of the inventory item placed in it
+	-- Hotbar position (as text, 1 to Hotbar.SIZE) -> Uid of the item kept there. The rest of the items
+	-- out of slots wait in the backpack
+	Hotbar = {} :: { [string]: string },
 	BoughtSlots = {} :: { [string]: boolean }, -- Slot key -> true for every slot bought from the sign
 	Floors = 1, -- How many floors the place has for them, counting the first; see Floors
 	UpgradeLevels = {} :: { [string]: number }, -- Sign upgrade name (see SignUpgrades) -> level, 1 if missing

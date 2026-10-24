@@ -31,7 +31,11 @@ export type OwnedItem = {
 
 -- Prices, odds and earnings follow the economy sheet, its spots filled in order within each rarity
 -- (a rarity's later spots wait for more items). The Hyperlaser has no spot there, so it's a third
--- Mythic a step above the Diamond, as the Diamond is above the Lightsaber
+-- Mythic a step above the Diamond, as the Diamond is above the Lightsaber. The Flashlight has none
+-- either, so it's a fourth Rare between the Sofa and the Catfish, the first Epic. Nor do the Chip
+-- Can and Cash Register, a fourth and fifth Uncommon evenly spaced between the Alarm Clock and the
+-- Controller, the first Rare, or the Smiley and Laser Pistol, each halfway between the Mythics
+-- either side of it
 local Items: { [string]: Item } = {
 	ToyCar = {
 		Id = "ToyCar",
@@ -55,6 +59,17 @@ local Items: { [string]: Item } = {
 		BaseMoneyPerStud = 1,
 		MeshName = "Bread",
 	},
+	Skateboard = {
+		Id = "Skateboard",
+		Name = "Skateboard",
+		Icon = 80556164416650,
+		Rarity = "Common",
+		OneIn = 11,
+		Price = 800,
+		MoneyPerSecond = 50,
+		BaseMoneyPerStud = 1,
+		MeshName = "Skateboard",
+	},
 	Phone = {
 		Id = "Phone",
 		Name = "Phone",
@@ -65,6 +80,50 @@ local Items: { [string]: Item } = {
 		MoneyPerSecond = 120,
 		BaseMoneyPerStud = 2,
 		MeshName = "Phone",
+	},
+	Clock = {
+		Id = "Clock",
+		Name = "Clock",
+		Icon = 81875936902412,
+		Rarity = "Uncommon",
+		OneIn = 67,
+		Price = 50000,
+		MoneyPerSecond = 180,
+		BaseMoneyPerStud = 3,
+		MeshName = "Clock",
+	},
+	AlarmClock = {
+		Id = "AlarmClock",
+		Name = "Alarm Clock",
+		Icon = 137525420267703,
+		Rarity = "Uncommon",
+		OneIn = 90,
+		Price = 110000,
+		MoneyPerSecond = 225,
+		BaseMoneyPerStud = 4,
+		MeshName = "AlarmClock",
+	},
+	ChipCan = {
+		Id = "ChipCan",
+		Name = "Chip Can",
+		Icon = 102796870026943,
+		Rarity = "Uncommon",
+		OneIn = 170,
+		Price = 180000,
+		MoneyPerSecond = 350,
+		BaseMoneyPerStud = 4,
+		MeshName = "ChipCan",
+	},
+	CashRegister = {
+		Id = "CashRegister",
+		Name = "Cash Register",
+		Icon = 78798865770093,
+		Rarity = "Uncommon",
+		OneIn = 320,
+		Price = 300000,
+		MoneyPerSecond = 540,
+		BaseMoneyPerStud = 5,
+		MeshName = "CashRegister",
 	},
 	Controller = {
 		Id = "Controller",
@@ -88,6 +147,28 @@ local Items: { [string]: Item } = {
 		BaseMoneyPerStud = 8,
 		MeshName = "RubiksCube",
 	},
+	Sofa = {
+		Id = "Sofa",
+		Name = "Sofa",
+		Icon = 139096438470109,
+		Rarity = "Rare",
+		OneIn = 1100,
+		Price = 1700000,
+		MoneyPerSecond = 2240,
+		BaseMoneyPerStud = 10,
+		MeshName = "Sofa",
+	},
+	Flashlight = {
+		Id = "Flashlight",
+		Name = "Flashlight",
+		Icon = 108114407885538,
+		Rarity = "Rare",
+		OneIn = 1500,
+		Price = 1900000,
+		MoneyPerSecond = 2700,
+		BaseMoneyPerStud = 11,
+		MeshName = "Flashlight",
+	},
 	CartoonCatfish = {
 		Id = "CartoonCatfish",
 		Name = "Catfish",
@@ -98,6 +179,28 @@ local Items: { [string]: Item } = {
 		MoneyPerSecond = 3150,
 		BaseMoneyPerStud = 12,
 		MeshName = "CartoonCatfish",
+	},
+	Bicycle = {
+		Id = "Bicycle",
+		Name = "Bicycle",
+		Icon = 118225983287546,
+		Rarity = "Epic",
+		OneIn = 7200,
+		Price = 3200000,
+		MoneyPerSecond = 9440,
+		BaseMoneyPerStud = 18,
+		MeshName = "Bicycle",
+	},
+	Bed = {
+		Id = "Bed",
+		Name = "Bed",
+		Icon = 98752772505460,
+		Rarity = "Epic",
+		OneIn = 8000,
+		Price = 4000000,
+		MoneyPerSecond = 11310,
+		BaseMoneyPerStud = 22,
+		MeshName = "Bed",
 	},
 	Slide = {
 		Id = "Slide",
@@ -143,6 +246,17 @@ local Items: { [string]: Item } = {
 		BaseMoneyPerStud = 100,
 		MeshName = "Lightsaber",
 	},
+	Smiley = {
+		Id = "Smiley",
+		Name = "Smiley",
+		Icon = 110929565514982,
+		Rarity = "Mythic",
+		OneIn = 1850000,
+		Price = 1200000000,
+		MoneyPerSecond = 410000,
+		BaseMoneyPerStud = 110,
+		MeshName = "Smiley",
+	},
 	Diamond = {
 		Id = "Diamond",
 		Name = "Diamond",
@@ -154,6 +268,17 @@ local Items: { [string]: Item } = {
 		BaseMoneyPerStud = 120,
 		MeshName = "Diamond",
 	},
+	LaserPistol = {
+		Id = "LaserPistol",
+		Name = "Laser Pistol",
+		Icon = 115321652663525,
+		Rarity = "Mythic",
+		OneIn = 2400000,
+		Price = 3600000000,
+		MoneyPerSecond = 920000,
+		BaseMoneyPerStud = 130,
+		MeshName = "LaserPistol",
+	},
 	HyperLaserRifle = {
 		Id = "HyperLaserRifle",
 		Name = "Hyperlaser",
@@ -164,6 +289,17 @@ local Items: { [string]: Item } = {
 		MoneyPerSecond = 1200000,
 		BaseMoneyPerStud = 140,
 		MeshName = "HyperLaserRifle",
+	},
+	NeonBike = {
+		Id = "NeonBike",
+		Name = "Neon Bike",
+		Icon = 121670432193620,
+		Rarity = "Exotic",
+		OneIn = 2500000,
+		Price = 23000000000,
+		MoneyPerSecond = 5400000,
+		BaseMoneyPerStud = 200,
+		MeshName = "NeonBike",
 	},
 }
 

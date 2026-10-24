@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local Hotbar = require(ReplicatedStorage.Shared.Hotbar)
 local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
@@ -14,6 +15,8 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local InventoryChanged = ReplicatedStorage.Remotes.InventoryChanged
 local EquipItem = ReplicatedStorage.Remotes.EquipItem
+local MoveHotbarItem = ReplicatedStorage.Remotes.MoveHotbarItem
+local DeleteItems = ReplicatedStorage.Remotes.DeleteItems
 
 local HELD_NAME = "HeldItem"
 local HELD_SIZE = 4 -- Studs; bigger items are shrunk to this along their longest side
@@ -30,6 +33,9 @@ local HOLD_POSES = {
 }
 
 local holdTracks: { [Model]: AnimationTrack } = setmetatable({}, { __mode = "k" }) :: any -- Character -> its hold pose
+-- The uids that were out of slots at each player's last sync this session, so the next one can tell
+-- which items are new to their hands
+local lastHoldable: { [Player]: { [string]: boolean } } = {}
 
 local InventoryService = {}
 
@@ -70,21 +76,90 @@ function InventoryService.GetEquipped(player: Player): Items.OwnedItem?
 	return if typeof(uid) == "string" then findHoldable(player, uid) else nil
 end
 
--- The client only ever gets the whole hotbar, so it can't fall out of step. Items in a slot
--- are left out; the slot shows them instead
+-- Items deleted or put in a slot leave the hotbar, and the ones after them move up, so its items
+-- are always numbered from 1 with no gaps. Items new to the player's hands since the last sync,
+-- bought or taken back out of a slot, go on the end while there's room. On the session's first
+-- sync nothing is new, unless the hotbar is empty, as in saves from before it
+local function updateHotbar(player: Player, data: PlayerDataService.Data, items: { Items.OwnedItem })
+	local holdable: { [string]: boolean } = {}
+	for _, owned in items do
+		holdable[owned.Uid] = true
+	end
+
+	local order: { string } = {}
+	local kept: { [string]: boolean } = {}
+	for position = 1, Hotbar.SIZE do
+		local uid = data.Hotbar[tostring(position)]
+		if uid and holdable[uid] and not kept[uid] then
+			table.insert(order, uid)
+			kept[uid] = true
+		end
+	end
+
+	local seen = lastHoldable[player]
+	local fillAll = seen == nil and #order == 0
+	for _, owned in items do
+		if #order >= Hotbar.SIZE then
+			break
+		end
+		local isNew = if seen then not seen[owned.Uid] else fillAll
+		if isNew and not kept[owned.Uid] then
+			table.insert(order, owned.Uid)
+			kept[owned.Uid] = true
+		end
+	end
+
+	table.clear(data.Hotbar)
+	for position, uid in order do
+		data.Hotbar[tostring(position)] = uid
+	end
+	lastHoldable[player] = holdable
+end
+
+-- The client only ever gets every item out of a slot and the whole hotbar, so it can't fall out
+-- of step. Items in a slot are left out; the slot shows them instead
 function InventoryService.Sync(player: Player)
 	local data = PlayerDataService.Get(player)
 	if not data then
 		return
 	end
 
-	local hotbar = {}
+	local items = {}
 	for _, owned in data.Inventory do
 		if not isPlaced(data, owned.Uid) then
-			table.insert(hotbar, owned)
+			table.insert(items, owned)
 		end
 	end
-	InventoryChanged:FireClient(player, hotbar)
+	updateHotbar(player, data, items)
+	InventoryChanged:FireClient(player, items, data.Hotbar)
+end
+
+-- Puts the item at that hotbar position, and whatever was there where the item was, or in the
+-- backpack if the item came from there. Nil puts the item in the backpack. A position past the
+-- hotbar's last item puts it on the end, as the sync closes the gaps
+function InventoryService.MoveInHotbar(player: Player, uid: string, position: number?)
+	local data = PlayerDataService.Get(player)
+	if not (data and findHoldable(player, uid)) then
+		return
+	end
+
+	local from: string? = nil
+	for key, hotbarUid in data.Hotbar do
+		if hotbarUid == uid then
+			from = key
+		end
+	end
+	if position then
+		local to = tostring(position)
+		local other = data.Hotbar[to]
+		data.Hotbar[to] = uid
+		if from and from ~= to then
+			data.Hotbar[from] = other
+		end
+	elseif from then
+		data.Hotbar[from] = nil
+	end
+	InventoryService.Sync(player)
 end
 
 -- Loaded once per character, then played and stopped as items are picked up and put away
@@ -221,24 +296,33 @@ function InventoryService.Equip(player: Player, uid: string?)
 	updateHeldItem(player)
 end
 
--- Deletes the item for good. Only items out of slots, so no slot is left showing a deleted item
-function InventoryService.Delete(player: Player, uid: string)
+-- Deletes the items for good. Only items out of slots, so no slot is left showing a deleted item
+function InventoryService.Delete(player: Player, uids: { string })
 	local inventory = getInventory(player)
-	if not (inventory and findHoldable(player, uid)) then
+	if not inventory then
 		return
 	end
 
-	for index, owned in inventory do
-		if owned.Uid == uid then
-			table.remove(inventory, index)
-			break
+	local deleted = false
+	for _, uid in uids do
+		if not findHoldable(player, uid) then
+			continue
+		end
+		for index, owned in inventory do
+			if owned.Uid == uid then
+				table.remove(inventory, index)
+				deleted = true
+				break
+			end
+		end
+		if player:GetAttribute("EquippedItem") == uid then
+			InventoryService.Equip(player, nil)
 		end
 	end
-	if player:GetAttribute("EquippedItem") == uid then
-		InventoryService.Equip(player, nil)
+	if deleted then
+		InventoryService.Sync(player)
+		InventoryService.EnsureCanStart(player)
 	end
-	InventoryService.Sync(player)
-	InventoryService.EnsureCanStart(player)
 end
 
 -- Adds a new copy of the item. Returns whether it was added
@@ -265,6 +349,9 @@ function InventoryService.Start()
 		onPlayerAdded(player)
 	end
 	Players.PlayerAdded:Connect(onPlayerAdded)
+	Players.PlayerRemoving:Connect(function(player)
+		lastHoldable[player] = nil
+	end)
 	PlayerDataService.Loaded:Connect(function(player)
 		InventoryService.EnsureCanStart(player)
 		InventoryService.Sync(player)
@@ -274,6 +361,26 @@ function InventoryService.Start()
 		if uid == nil or typeof(uid) == "string" then
 			InventoryService.Equip(player, uid)
 		end
+	end)
+	MoveHotbarItem.OnServerEvent:Connect(function(player, uid, position)
+		if typeof(uid) == "string" and (position == nil or Hotbar.IsPosition(position)) then
+			InventoryService.MoveInHotbar(player, uid, position)
+		end
+	end)
+	-- The backpack's Remove button, once the player confirms the items they picked
+	DeleteItems.OnServerEvent:Connect(function(player, uids)
+		local inventory = getInventory(player)
+		if not (inventory and typeof(uids) == "table") then
+			return
+		end
+		-- No more than the player owns, so a client can't send a huge list to check
+		local valid = {}
+		for index = 1, math.min(#uids, #inventory) do
+			if typeof(uids[index]) == "string" then
+				table.insert(valid, uids[index])
+			end
+		end
+		InventoryService.Delete(player, valid)
 	end)
 end
 

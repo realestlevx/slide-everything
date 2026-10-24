@@ -51,6 +51,9 @@ type StackItem = {
 local stacks: { [Folder]: { StackItem } } = {}
 local stackPlace: Folder? = nil -- The place whose saved stack has been put back, which happens once
 local synced: { [Folder]: number } = {} -- Other places -> how many of their CollectItems are stacked
+-- The pad streams out while the player is far down the slide, so items that finish then wait here
+-- and are stacked once it's back
+local pending: { [Folder]: { Items.Item } } = {}
 local itemsFlying = 0 -- Collected items still on their way into the player
 local lastCash: { [Folder]: number } = {} -- Each place's CollectCash when it was last seen
 local tickSounds: { Sound } = {} -- Ticks still playing, oldest first
@@ -122,11 +125,19 @@ local function findLanding(stackPart: BasePart, rotation: CFrame, size: Vector3)
 	return lowest
 end
 
--- A finished item appears on top of the stack, anchored where it lands. It fades in unless instant
+-- A finished item appears on top of the stack, anchored where it lands. It fades in unless instant.
+-- If the pad hasn't streamed in, it's stacked once it does
 function CollectController.AddToPile(place: Folder, item: Items.Item, instant: boolean?)
 	local stackPart = getStackPart(place)
 	local stack = getStack(place)
-	if not stackPart or #stack >= Drops.MAX_PILE then
+	if not stackPart then
+		local waiting = pending[place] or {}
+		pending[place] = waiting
+		if #stack + #waiting < Drops.MAX_PILE then
+			table.insert(waiting, item)
+		end
+		return
+	elseif #stack >= Drops.MAX_PILE then
 		return
 	end
 	local modelled, size = PhysicalItem.GetShape(item)
@@ -145,6 +156,14 @@ function CollectController.AddToPile(place: Folder, item: Items.Item, instant: b
 	end
 	copy.Parent = workspace
 	table.insert(stack, { Part = copy })
+end
+
+local function addPending(place: Folder)
+	local waiting = pending[place]
+	pending[place] = nil
+	for _, item in waiting or {} do
+		CollectController.AddToPile(place, item)
+	end
 end
 
 -- Played from the client, so only this player hears them
@@ -235,6 +254,7 @@ local function collectStack(place: Folder)
 		pitch = math.min(pitch + TICK_PITCH_STEP, MAX_TICK_PITCH)
 	end
 	table.clear(stack)
+	pending[place] = nil
 end
 
 local function clearStack(place: Folder)
@@ -244,6 +264,7 @@ local function clearStack(place: Folder)
 	end
 	table.clear(stack)
 	synced[place] = nil
+	pending[place] = nil
 end
 
 local function getSavedIds(place: Folder): { string }
@@ -344,8 +365,12 @@ function CollectController.Start()
 		place.DescendantAdded:Connect(function(descendant)
 			if descendant.Name == BILLBOARD_NAME then
 				showCash(place)
-			elseif descendant.Name == STACK_PART_NAME and not isOwn(place) then
-				syncOtherStack(place)
+			elseif descendant.Name == STACK_PART_NAME then
+				if isOwn(place) then
+					addPending(place)
+				else
+					syncOtherStack(place)
+				end
 			end
 		end)
 

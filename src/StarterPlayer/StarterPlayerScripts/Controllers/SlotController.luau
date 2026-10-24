@@ -98,6 +98,15 @@ local function getSlot(instance: Instance): Model?
 	return nil
 end
 
+-- The slot the instance is in, however deep, if any
+local function findSlot(place: Folder, instance: Instance): Model?
+	local current = instance
+	while current.Parent and current.Parent ~= place do
+		current = current.Parent
+	end
+	return if current.Parent == place and Places.IsSlot(current) then current :: Model else nil
+end
+
 -- What the server put in the slot, for everyone to see
 local function getItem(slot: Model): Items.Item?
 	local id = slot:GetAttribute("ItemId")
@@ -490,9 +499,8 @@ local function onDescendantAdded(place: Folder, descendant: Instance)
 			itemSizes[descendant] = getSize(slot)
 			ItemModel.SetScale(descendant, itemSizes[descendant])
 		end
-		if fadedPlaces[place] then
-			ItemModel.SetLocalTransparency(descendant, 1)
-		end
+		-- One that streamed out comes back as the same part, still as faded as it was when it left
+		ItemModel.SetLocalTransparency(descendant, if fadedPlaces[place] then 1 else 0)
 		if slot and slot:IsA("Model") and placing[slot] then
 			-- Hidden until the flown copy lands on it
 			ItemModel.SetLocalTransparency(descendant, 1)
@@ -501,6 +509,17 @@ local function onDescendantAdded(place: Folder, descendant: Instance)
 			land(slot, descendant)
 		end
 		return
+	end
+
+	-- Parts that streamed out come back as the same parts, still as faded as they were when they left,
+	-- which they'd stay if the place faded back in meanwhile. The parts inside an item go with it
+	if descendant:IsA("BasePart") or descendant:IsA("Decal") then
+		local item = descendant:FindFirstAncestor(SLOT_ITEM_NAME)
+		if item and item:IsA("BasePart") then
+			descendant.LocalTransparencyModifier = item.LocalTransparencyModifier
+		elseif findSlot(place, descendant) then
+			descendant.LocalTransparencyModifier = if fadedPlaces[place] then 1 else 0
+		end
 	end
 
 	local slot = getSlot(descendant)

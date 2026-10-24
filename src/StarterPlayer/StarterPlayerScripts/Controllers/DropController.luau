@@ -26,19 +26,21 @@ local DROP_FLOOR_NAME = "DropPart"
 -- The parts the slide's made of, below the funnel. Items can be steered, and are pulled into the pack,
 -- once they're over one; until then they just fall
 local SLIDE_NAME = "Ground_Slide"
+-- Walls the items slide along without losing any speed down the slide, like the ones that funnel the
+-- outer places' items in toward the middle. Blocks, at any angle
+local BARRIER_NAME = "Slippery_Barrier"
 local SLOT_ITEM_NAME = "SlotItem"
 
 -- Dropped items barely grip, and their grip outweighs the slide's, so they slide down even the
 -- gentlest ramp. The slide speed (see Drops.GetSlideSpeed) then keeps them from going faster than
 -- that down the slide; falling isn't slowed
 local ITEM_PHYSICS = PhysicalProperties.new(0.7, 0.05, 0.2, 100, 1)
--- Studs per second sideways while the player steers, at the slide speed before any Sliding Speed
--- upgrade. Steering grows faster than the slide speed, by its rise to the power of STEER_GROWTH, so a
--- faster pack cuts across more sharply and still makes the gates that come at it sooner: at 2x slide
--- speed it steers 2.8x as fast, and at 3x 5.2x. The pack's pull grows just with the slide speed, so
--- it holds together just as tightly however fast it slides
+-- Studs per second sideways while the player steers, times their Sliding Speed upgrade and
+-- STEER_MULTIPLIER, so a faster pack cuts across more sharply and still makes the gates that come at
+-- it sooner: 22.5 at 1x, 67.5 at 3x and 112.5 at 5x. The pack's pull grows just with the slide speed,
+-- so it holds together just as tightly however fast it slides
 local STEER_SPEED = 15
-local STEER_GROWTH = 1.5
+local STEER_MULTIPLIER = 1.5
 -- On the slide, items grip sideways like sleds: they slide where they're steered and stop
 -- drifting once let go, instead of skidding off. How quickly they take up a new sideways speed at the
 -- slide speed before any upgrade; higher is tighter. It grows with the slide speed, so they take it up
@@ -65,6 +67,11 @@ local CATCH_UP_EASE = 2 -- How quickly an item takes up a faster speed; higher i
 -- held up for a long while, is too far gone to catch up, so it finishes where it is. It keeps what it
 -- made up to there and makes nothing more
 local LEFT_BEHIND = 4
+-- Studs past an item's own size that a barrier counts as against it, so it's turned along it before
+-- it hits and loses speed. One more across the slide than MAX_BARRIER_ANGLE would need too much speed
+-- along it to keep up the pace down the slide, so it stops items like any other wall
+local BARRIER_GAP = 1
+local MAX_BARRIER_ANGLE = math.rad(60)
 -- Items stay the way up they were dropped instead of tumbling, tilted to lie along the ground under them
 local TILT_RESPONSIVENESS = 25
 -- Studs below an item at its own size that the ground it lies along is looked for. An upgraded item
@@ -80,14 +87,29 @@ local FALL_LIMIT = 150
 local END_PAUSE = 0.75 -- Seconds the camera stays on where the items ended up
 local ITEM_FADE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- The camera chases the items from straight behind, looking down the slide, raised by FOLLOW_PITCH.
--- It follows them down the slide, up and down, and across as they're steered, sliding sideways with
--- them instead of turning toward them, so it always looks straight down the slide
-local FOLLOW_DISTANCE = 36 -- Studs
-local FOLLOW_PITCH = math.rad(40)
--- Studs down the slide past the items that the camera looks, so it looks along the slide ahead of
--- them instead of down on them
-local LOOK_AHEAD = 6
+-- The camera chases the items from straight behind, looking down the slide, raised by FOLLOW_PITCH
+-- off the slide under them rather than off the flat, so it sits as high over a steep slide as over a
+-- gentle one instead of skimming along it. It follows them down the slide, up and down, and across as
+-- they're steered, sliding sideways with them instead of turning toward them, so it always looks
+-- straight down the slide
+local FOLLOW_DISTANCE = 60 -- Studs
+local FOLLOW_PITCH = math.rad(31)
+-- Studs down the slide past the items that the camera looks. The pack sits in the lower third of the
+-- screen, with the slide ahead and the walls coming up on it above
+local LOOK_AHEAD = 44
+-- The slope's first measured this far down the slide from Start, before any item's on it, then
+-- under the items as they go. How quickly the camera takes up a new slope; higher is sooner
+local SLOPE_PROBE = 150 -- Studs
+local SLOPE_SHARPNESS = 3
+-- The view widens as the pack speeds up: SPEED_FOV degrees at the slide speed before any upgrade, as
+-- much again for each time faster, up to MAX_SPEED_FOV. How quickly it takes up the pack's speed;
+-- higher is sooner
+local SPEED_FOV = 4 -- Degrees
+local MAX_SPEED_FOV = 12 -- Degrees
+local SPEED_SHARPNESS = 5
+-- The camera leans into the way the player steers, by up to MAX_BANK. How quickly; higher is sooner
+local MAX_BANK = math.rad(1)
+local BANK_SHARPNESS = 5
 -- How quickly the camera slides across after the items; higher is snappier. It trails them a little,
 -- so steering still moves them across the screen for a moment before the camera catches up
 local SIDE_SHARPNESS = 4
@@ -97,7 +119,9 @@ local WALL_GAP = 1 -- Studs the camera keeps in front of a wall between it and t
 -- Anything facing up more than this, as the up part of the way it faces, counts as ground
 local GROUND_FACING = 0.5
 -- How quickly the camera catches up with where it should be; higher is snappier. The view turns
--- faster than the camera moves, so the items stay in frame while it glides after them
+-- faster than the camera moves, so the items stay in frame while it glides after them. Its goals are
+-- led by how far the pack goes in that time, so however fast it slides the camera keeps to the same
+-- place behind it, falling back only while the pack speeds up
 local MOVE_SHARPNESS = 4
 local LOOK_SHARPNESS = 10
 local RETURN_SHARPNESS = 6
@@ -114,6 +138,14 @@ local STREAM_INTERVAL = 0.5 -- Seconds between asks for the slide around the ite
 -- place while it stood at the base. Through the drop it's held this far over the pack's middle
 -- instead, above the camera's view and anything the items could reach
 local CHARACTER_HEIGHT = 150 -- Studs
+-- This client streams out what's far from its character, and around 1600 studs down the slide that
+-- was the whole base: it all came back at once as the drop ended, and the frame rate sank while it
+-- did. So the character goes no further than HOME_REACH from where it stood, and waits there, up
+-- over the way down, while the pack goes on. It follows on once the pack would get further than
+-- PACK_REACH from it: physics runs within about 1000 studs of the character (the player's
+-- SimulationRadius, which scripts can't read), less room for the items ahead of the pack's middle
+local HOME_REACH = 1000 -- Studs
+local PACK_REACH = 700 -- Studs
 
 type DroppedItem = {
 	Item: Items.Item,
@@ -165,6 +197,10 @@ type Drop = {
 	-- Studs across from that line that the camera's slid after the pack, to the right of the way down.
 	-- Nil until the first frame
 	Side: number?,
+	Slope: number, -- Radians the slide falls away down the way down, eased in (see SLOPE_SHARPNESS)
+	-- Studs per second the pack goes down the slide, across the ground, eased in (see SPEED_SHARPNESS)
+	PackSpeed: number,
+	Barriers: { BasePart }, -- See BARRIER_NAME
 	-- Finds the walls between the camera and the items and the ground under the items, but not the items
 	WorldRay: RaycastParams,
 }
@@ -178,8 +214,11 @@ local cameraPosition = Vector3.zero
 local cameraLookAt = Vector3.zero
 local goalPosition = Vector3.zero
 local goalLookAt = Vector3.zero
+local cameraFov = 70
+local cameraBank = 0 -- Radians it's rolled, leaning into the steering
 local returnCFrame = CFrame.identity -- Where the camera was before the drop
 local returnLookAt = Vector3.zero
+local returnFov = 70
 local lastStreamRequest = 0
 local frozenRoot: BasePart? = nil -- The character's, while it's held through a drop
 local frozenAt = CFrame.identity -- Where it stood as the drop started
@@ -193,6 +232,29 @@ end
 
 local function flatten(vector: Vector3): Vector3
 	return Vector3.new(vector.X, 0, vector.Z)
+end
+
+-- The way out, across the ground, from a barrier within reach studs of the item's middle, if any
+local function getBarrierNormal(current: Drop, position: Vector3, reach: number): Vector3?
+	for _, barrier in current.Barriers do
+		if not barrier.Parent then
+			continue
+		end
+		local half = barrier.Size / 2
+		local offset = barrier.CFrame:PointToObjectSpace(position)
+		local nearest = Vector3.new(
+			math.clamp(offset.X, -half.X, half.X),
+			math.clamp(offset.Y, -half.Y, half.Y),
+			math.clamp(offset.Z, -half.Z, half.Z)
+		)
+		local away = barrier.CFrame:VectorToWorldSpace(offset - nearest)
+		local across = flatten(away)
+		-- Off its sides, not on top of it
+		if away.Magnitude < reach and across.Magnitude > away.Magnitude / 2 then
+			return across.Unit
+		end
+	end
+	return nil
 end
 
 -- How far the item's got, and what that's earned it, counting each stud at the multiplier of the
@@ -378,6 +440,7 @@ local function followItems(current: Drop, dt: number)
 	showStats(current)
 
 	if #active == 0 then
+		current.PackSpeed *= math.exp(-SPEED_SHARPNESS * dt)
 		if not current.Ending then
 			current.Ending = true
 			task.delay(END_PAUSE, function()
@@ -416,15 +479,21 @@ local function followItems(current: Drop, dt: number)
 	end
 	center /= #active
 	if frozenRoot then
-		frozenRoot.CFrame = frozenAt.Rotation + center + Vector3.yAxis * CHARACTER_HEIGHT
+		local over = center + Vector3.yAxis * CHARACTER_HEIGHT
+		local toHome = frozenAt.Position - over
+		local back = math.clamp(toHome.Magnitude - HOME_REACH, 0, PACK_REACH)
+		local position = if back > 0 then over + toHome.Unit * back else over
+		frozenRoot.CFrame = frozenAt.Rotation + position
 	end
 
 	local steer = HudController.GetSteer()
 	local right = current.Direction:Cross(Vector3.yAxis)
 	local sideScale = current.SlideSpeed / Drops.SLIDE_SPEED
 	local grip = 1 - math.exp(-SIDE_GRIP * sideScale * dt)
-	local steerSpeed = STEER_SPEED * sideScale ^ STEER_GROWTH
+	local steerSpeed = STEER_SPEED * current.Speed * STEER_MULTIPLIER
 	local ease = 1 - math.exp(-CATCH_UP_EASE * dt)
+	local pace = 0 -- Of every item down the slide, across the ground, added up
+	local slideNormal = Vector3.zero -- Of the slide under them, added up
 	for _, dropped in active do
 		local part = dropped.Part
 		local itemVelocity = part.AssemblyLinearVelocity
@@ -462,8 +531,19 @@ local function followItems(current: Drop, dt: number)
 			end
 			sideways += (target - sideways) * grip
 		end
-		itemVelocity = forward + right * sideways + Vector3.yAxis * itemVelocity.Y
+		local flat = forward + right * sideways
+		-- Against a barrier, it slides along it instead of into it, keeping its pace down the slide
+		local away = getBarrierNormal(current, part.Position, part.Size.Magnitude / 2 + BARRIER_GAP)
+		local onward = forward:Dot(current.Direction)
+		if away and onward > 0 and flat:Dot(away) < 0 then
+			local along = current.Direction - away * current.Direction:Dot(away)
+			if along.Magnitude > math.cos(MAX_BARRIER_ANGLE) then
+				flat = along.Unit * onward / along.Magnitude
+			end
+		end
+		itemVelocity = flat + Vector3.yAxis * itemVelocity.Y
 		part.AssemblyLinearVelocity = itemVelocity
+		pace += onward
 
 		dropped.Align.CFrame = if ground
 			then CFrame.fromRotationBetweenVectors(Vector3.yAxis, ground.Normal) * dropped.Rotation
@@ -472,8 +552,15 @@ local function followItems(current: Drop, dt: number)
 			dropped.GroundY = ground.Position.Y
 			if ground.Instance.Name == SLIDE_NAME then
 				dropped.SlideY = ground.Position.Y
+				slideNormal += ground.Normal
 			end
 		end
+	end
+	local speed = math.clamp(pace / #active, 0, current.SlideSpeed)
+	current.PackSpeed += (speed - current.PackSpeed) * (1 - math.exp(-SPEED_SHARPNESS * dt))
+	if slideNormal ~= Vector3.zero then
+		local slope = math.atan2(slideNormal:Dot(current.Direction), slideNormal.Y)
+		current.Slope += (slope - current.Slope) * (1 - math.exp(-SLOPE_SHARPNESS * dt))
 	end
 
 	-- The pack's middle, moved across onto the line down the middle of the slide from Start
@@ -500,13 +587,18 @@ local function followItems(current: Drop, dt: number)
 	local followed = focus + right * side
 	current.Followed = followed
 
-	local behind = -current.Direction
-	local offset = (behind * math.cos(FOLLOW_PITCH) + Vector3.yAxis * math.sin(FOLLOW_PITCH)) * FOLLOW_DISTANCE
+	-- Down along the slide, and straight up off it
+	local slope = current.Slope
+	local downSlide = current.Direction * math.cos(slope) - Vector3.yAxis * math.sin(slope)
+	local upSlide = current.Direction * math.sin(slope) + Vector3.yAxis * math.cos(slope)
+	local offset = (upSlide * math.sin(FOLLOW_PITCH) - downSlide * math.cos(FOLLOW_PITCH)) * FOLLOW_DISTANCE
 	-- In front of any wall that would come between, like the funnel's
 	local hit = workspace:Raycast(followed, offset, current.WorldRay)
 	local distance = if hit then math.max(hit.Distance - WALL_GAP, WALL_GAP) else FOLLOW_DISTANCE
-	goalPosition = followed + offset.Unit * distance
-	goalLookAt = followed + current.Direction * LOOK_AHEAD
+	-- Led by how far the pack goes while each catches up (see MOVE_SHARPNESS)
+	local velocity = (current.Direction - Vector3.yAxis * math.tan(slope)) * current.PackSpeed
+	goalPosition = followed + offset.Unit * distance + velocity / MOVE_SHARPNESS
+	goalLookAt = followed + downSlide * LOOK_AHEAD + velocity / LOOK_SHARPNESS
 
 	-- With streaming, parts of the slide far from the character may not be loaded on this client yet
 	if os.clock() - lastStreamRequest > STREAM_INTERVAL then
@@ -530,6 +622,14 @@ local function onRenderStep(dt: number)
 	local lastPosition = cameraPosition
 	cameraPosition = cameraPosition:Lerp(goalPosition, 1 - math.exp(-moveSharpness * dt))
 	cameraLookAt = cameraLookAt:Lerp(goalLookAt, 1 - math.exp(-lookSharpness * dt))
+	local fov = returnFov
+	if current then
+		fov += math.min(SPEED_FOV * current.PackSpeed / Drops.SLIDE_SPEED, MAX_SPEED_FOV)
+	end
+	cameraFov += (fov - cameraFov) * (1 - math.exp(-moveSharpness * dt))
+	local bank = if current then -HudController.GetSteer() * MAX_BANK else 0
+	cameraBank += (bank - cameraBank) * (1 - math.exp(-BANK_SHARPNESS * dt))
+	HudController.SetDropSpeed(if current then current.PackSpeed / Drops.SLIDE_SPEED else 0)
 	-- Gliding back up to the player, it climbs ahead of coming across (see RISE_SHARPNESS)
 	if not current and goalPosition.Y > lastPosition.Y then
 		local y = lastPosition.Y + (goalPosition.Y - lastPosition.Y) * (1 - math.exp(-RISE_SHARPNESS * dt))
@@ -554,12 +654,14 @@ local function onRenderStep(dt: number)
 		cameraHeld = false
 		RunService:UnbindFromRenderStep(CAMERA_STEP_NAME)
 		camera.CFrame = returnCFrame
+		camera.FieldOfView = returnFov
 		camera.CameraType = Enum.CameraType.Custom
 		return
 	end
 
-	camera.CFrame = CFrame.lookAt(cameraPosition, cameraLookAt)
+	camera.CFrame = CFrame.lookAt(cameraPosition, cameraLookAt) * CFrame.Angles(0, 0, cameraBank)
 	camera.Focus = CFrame.new(cameraLookAt)
+	camera.FieldOfView = cameraFov
 end
 
 local function holdCamera()
@@ -572,8 +674,11 @@ local function holdCamera()
 	local camera = workspace.CurrentCamera
 	returnCFrame = camera.CFrame
 	returnLookAt = getLookAt(camera.CFrame, camera.Focus.Position)
+	returnFov = camera.FieldOfView
 	cameraPosition = returnCFrame.Position
 	cameraLookAt = returnLookAt
+	cameraFov = returnFov
+	cameraBank = 0
 	goalPosition = cameraPosition
 	goalLookAt = cameraLookAt
 	camera.CameraType = Enum.CameraType.Scriptable
@@ -630,6 +735,19 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	worldRay.FilterType = Enum.RaycastFilterType.Exclude
 	worldRay.RespectCanCollide = true
 
+	-- See SLOPE_PROBE
+	local slope = 0
+	local probe = workspace:Raycast(start + direction * SLOPE_PROBE, -Vector3.yAxis * FALL_LIMIT * 2, worldRay)
+	if probe and probe.Instance.Name == SLIDE_NAME then
+		slope = math.atan2(probe.Normal:Dot(direction), probe.Normal.Y)
+	end
+	local barriers: { BasePart } = {}
+	for _, descendant in workspace:GetDescendants() do
+		if descendant.Name == BARRIER_NAME and descendant:IsA("BasePart") then
+			table.insert(barriers, descendant)
+		end
+	end
+
 	local speed = getUpgrade(place, "SlideSpeed")
 	local openings: { [BasePart]: boolean } = {}
 	if floor then
@@ -662,6 +780,9 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Focus = nil,
 		Followed = nil,
 		Side = nil,
+		Slope = slope,
+		PackSpeed = 0,
+		Barriers = barriers,
 		WorldRay = worldRay,
 	}
 	drop = current

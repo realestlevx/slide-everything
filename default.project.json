@@ -5,7 +5,10 @@
 
     "ReplicatedStorage": {
       "$path": "src/ReplicatedStorage",
-      "$ignoreUnknownInstances": true
+      "$ignoreUnknownInstances": true,
+      "Packages": {
+        "$path": "Packages"
+      }
     },
 
     "ServerScriptService": {

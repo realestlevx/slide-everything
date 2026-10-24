@@ -22,6 +22,7 @@ local UpgradeSlot = ReplicatedStorage.Remotes.UpgradeSlot
 local UpgradeResult = ReplicatedStorage.Remotes.UpgradeResult
 local BuySlot = ReplicatedStorage.Remotes.BuySlot
 local BuySlotResult = ReplicatedStorage.Remotes.BuySlotResult
+local EquipBest = ReplicatedStorage.Remotes.EquipBest
 
 local SLOT_ITEM_NAME = "SlotItem"
 local RARITY_PART_NAME = "Rarity" -- Part in a slot tinted with its item's rarity color
@@ -40,10 +41,12 @@ local GAME_PASS_ATTRIBUTE = "GamePass"
 -- the "+ $" popups) and shows its copies, so the slot's own stay hidden, even in the server's view
 local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash" }
 local PLACE_COUNT_ATTRIBUTE = "PlaceCount" -- On a slot: how many times an item was put in it by hand
+local EQUIP_BEST_COOLDOWN = 0.5 -- Seconds between Equip Best presses that count, so spamming it does nothing
 
 local rarityPartColors: { [BasePart]: Color3 } = {} -- Each Rarity part's own color, for empty slots
 local partTransparencies: { [BasePart]: number } = {} -- Each slot part's own transparency, for once it's bought
 local passOwners: { [Player]: boolean } = {} -- Players who own the paid slots pass
+local lastEquipBestTimes: { [Player]: number } = {}
 
 local SlotService = {}
 
@@ -344,6 +347,100 @@ local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 	updateMoneyPerSecond(player)
 end
 
+-- The backpack's Equip Best button: the items that earn the most go in the player's open slots, as
+-- many as they have. Ones already in a slot that make the cut stay where they are, the rest of the
+-- best go in the other slots in order, best first, and what they replace goes back to the hotbar
+local function onEquipBest(player: Player)
+	local data = PlayerDataService.Get(player)
+	local place = PlaceService.GetPlace(player)
+	if not (data and place) then
+		return
+	end
+	local now = os.clock()
+	if now - (lastEquipBestTimes[player] or -math.huge) < EQUIP_BEST_COOLDOWN then
+		return
+	end
+	lastEquipBestTimes[player] = now
+
+	local slots: { Model } = {}
+	for _, slot in Places.GetSlots(place) do
+		if isUnlocked(player, data, slot) then
+			table.insert(slots, slot)
+		end
+	end
+
+	-- Best earners first. Between equals, ones already in a slot, so nothing moves for nothing, then
+	-- the order they were bought in
+	local placed: { [string]: boolean } = {}
+	for _, uid in data.Slots do
+		placed[uid] = true
+	end
+	local ranked = {}
+	for index, owned in data.Inventory do
+		local item = Items[owned.Id]
+		if item then
+			local earns = Upgrades.GetMoneyPerSecond(item, Upgrades.GetLevel(owned))
+			table.insert(ranked, { Owned = owned, Earns = earns, Placed = placed[owned.Uid] == true, Index = index })
+		end
+	end
+	table.sort(ranked, function(a, b)
+		if a.Earns ~= b.Earns then
+			return a.Earns > b.Earns
+		elseif a.Placed ~= b.Placed then
+			return a.Placed
+		end
+		return a.Index < b.Index
+	end)
+	local count = math.min(#slots, #ranked)
+	local best: { [string]: boolean } = {}
+	for index = 1, count do
+		best[ranked[index].Owned.Uid] = true
+	end
+
+	local open: { Model } = {}
+	local kept: { [string]: boolean } = {}
+	for _, slot in slots do
+		local uid = data.Slots[Places.GetSlotKey(slot)]
+		if uid and best[uid] then
+			kept[uid] = true
+		else
+			table.insert(open, slot)
+		end
+	end
+
+	local changed = false
+	for index = 1, count do
+		local owned = ranked[index].Owned
+		if not kept[owned.Uid] then
+			local slot = table.remove(open, 1) :: Model
+			data.Slots[Places.GetSlotKey(slot)] = owned.Uid
+			-- Lands like an item put in by hand (see onPlaceTriggered)
+			slot:SetAttribute(PLACE_COUNT_ATTRIBUTE, (slot:GetAttribute(PLACE_COUNT_ATTRIBUTE) or 0) + 1)
+			show(slot, owned)
+			changed = true
+		end
+	end
+	-- Only items that can't earn are left in the slots nothing was put in
+	for _, slot in open do
+		local key = Places.GetSlotKey(slot)
+		if data.Slots[key] then
+			data.Slots[key] = nil
+			show(slot, nil)
+			changed = true
+		end
+	end
+	if not changed then
+		return
+	end
+
+	-- The item in their hands may have just gone in a slot
+	if player:GetAttribute("EquippedItem") ~= nil and not InventoryService.GetEquipped(player) then
+		InventoryService.Equip(player, nil)
+	end
+	InventoryService.Sync(player)
+	updateMoneyPerSecond(player)
+end
+
 -- Whether a slot sent by a client is one of that player's own
 local function isOwnSlot(player: Player, slot: any): boolean
 	local place = PlaceService.GetPlace(player)
@@ -477,6 +574,7 @@ function SlotService.Start()
 	Players.PlayerAdded:Connect(checkPass)
 	Players.PlayerRemoving:Connect(function(player)
 		passOwners[player] = nil
+		lastEquipBestTimes[player] = nil
 	end)
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, purchased)
 		if purchased and passId == GamePasses.PaidSlots then
@@ -525,6 +623,7 @@ function SlotService.Start()
 	RemoveFromSlot.OnServerEvent:Connect(onRemove)
 	UpgradeSlot.OnServerEvent:Connect(onUpgrade)
 	BuySlot.OnServerEvent:Connect(onBuySlot)
+	EquipBest.OnServerEvent:Connect(onEquipBest)
 
 	-- Items in slots pay out once a second
 	task.spawn(function()

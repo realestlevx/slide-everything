@@ -5,7 +5,7 @@ local BinService = {}
 local function onBinTriggered(player: Player)
 	local owned = InventoryService.GetEquipped(player)
 	if owned then
-		InventoryService.Delete(player, owned.Uid)
+		InventoryService.Delete(player, { owned.Uid })
 	end
 end
 

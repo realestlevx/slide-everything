@@ -29,13 +29,15 @@ local ROCK_PERIOD = 5 -- Seconds to rock there and back
 local BOB_HEIGHT = 2 -- Studs above and below where it was built
 local BOB_PERIOD = 3.5 -- Seconds to bob up and back down
 
--- On the way back FadeGui's Fade covers the screen, the character moves to the base's spawn while
--- it's covered, and it fades away again
+-- On the way back to the base, or to the market, FadeGui's Fade covers the screen, the character
+-- moves to the spawn there while it's covered, and it fades away again
 local FADE_GUI_NAME = "FadeGui"
 local FADE_FRAME_NAME = "Fade"
 local FADE_IN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_OUT_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local FADE_DISPLAY_ORDER = 100 -- Over every other gui, which are all lower
+-- The market's spawn is on Workspace.Market as SpawnCFrame (see PlaceService)
+local MARKET_NAME = "Market"
 
 -- The top bar's Next and Back buttons step the player up and down their base's floors, going round
 -- from the top floor to the bottom and back, so with two floors each goes to the other one. They
@@ -49,7 +51,7 @@ type Float = {
 	Connection: RBXScriptConnection?, -- Picks up parts of its folder that stream in later
 }
 
-local goingHome = false
+local travelling = false
 local floats: { [BasePart]: Float } = {} -- Each kill part -> what floats with it
 
 local BaseController = {}
@@ -82,10 +84,17 @@ local function isInBase(place: Folder, position: Vector3): boolean
 		and position.Y >= high.Y - FALL_DEPTH
 end
 
+-- How many floors the place has for its owner, counting the first (see FloorService)
+local function getFloorCount(place: Folder): number
+	local count = place:GetAttribute("Floors")
+	return if typeof(count) == "number" then count else 1
+end
+
 local function checkOutside()
 	local place = getOwnPlace()
 	local root = getRoot()
 	HudController.SetOutsideBase(place ~= nil and root ~= nil and not isInBase(place, root.Position))
+	HudController.SetFloorsUnlocked(place ~= nil and getFloorCount(place) > 1)
 end
 
 -- Fades the screen to the given transparency and waits for it. Made again on every respawn
@@ -113,21 +122,29 @@ local function moveTo(cframe: CFrame)
 	checkOutside()
 end
 
--- The base around the spawn is asked for as the screen fades, in case it's streamed out
-local function goHome()
-	local place = getOwnPlace()
-	local home = place and place:GetAttribute("SpawnCFrame")
-	if goingHome or typeof(home) ~= "CFrame" or not getRoot() then
+-- What's around the spawn is asked for as the screen fades, in case it's streamed out
+local function travelTo(target: unknown)
+	if travelling or typeof(target) ~= "CFrame" or not getRoot() then
 		return
 	end
-	goingHome = true
-	task.spawn(pcall, LocalPlayer.RequestStreamAroundAsync, LocalPlayer, home.Position)
+	travelling = true
+	task.spawn(pcall, LocalPlayer.RequestStreamAroundAsync, LocalPlayer, target.Position)
 	fade(0, FADE_IN_INFO)
 	-- Looked up again inside, since the character may have respawned while the screen faded
-	moveTo(home)
+	moveTo(target)
 
 	fade(1, FADE_OUT_INFO)
-	goingHome = false
+	travelling = false
+end
+
+local function goHome()
+	local place = getOwnPlace()
+	travelTo(place and place:GetAttribute("SpawnCFrame"))
+end
+
+local function goToMarket()
+	local market = workspace:FindFirstChild(MARKET_NAME)
+	travelTo(market and market:GetAttribute("SpawnCFrame"))
 end
 
 -- Where the player goes on the floor, or nil if it isn't built or its spawn hasn't streamed in
@@ -145,11 +162,10 @@ end
 local function stepFloor(step: number)
 	local place = getOwnPlace()
 	local root = getRoot()
-	if goingHome or not (place and root) then
+	if travelling or not (place and root) then
 		return
 	end
-	local count = place:GetAttribute("Floors")
-	count = if typeof(count) == "number" then count else 1
+	local count = getFloorCount(place)
 	local current, nearest = 1, math.huge
 	for number = 1, count do
 		local spawn = getFloorSpawn(place, number)
@@ -219,6 +235,9 @@ end
 function BaseController.Start()
 	HudController.HomeRequested:Connect(function()
 		task.spawn(goHome)
+	end)
+	HudController.MarketRequested:Connect(function()
+		task.spawn(goToMarket)
 	end)
 	HudController.FloorRequested:Connect(stepFloor)
 

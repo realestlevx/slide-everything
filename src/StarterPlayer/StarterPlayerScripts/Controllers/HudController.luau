@@ -32,6 +32,9 @@ local SEQUENCES = {
 -- The top bar holds one of these at a time: the base buttons, the button back to the base once the
 -- player's left it, or the drop view's Spectate. Whichever is leaving slides out before the next comes in
 local TOP_PIECES = { "BaseButtons", "OutsideBaseButtons", "Spectate" }
+-- The top bar's Market, Next, Back and Base buttons all move the player, so they share one cooldown:
+-- a click on any of them is ignored if one went through less than this long ago
+local TOP_BUTTON_COOLDOWN = 0.5 -- Seconds
 
 -- The clock on the timer rocks from side to side
 local ICON_TILT = 5 -- Degrees either way
@@ -79,6 +82,15 @@ local MULTIPLIER_UP_MAX_PITCH = 1.5
 -- And MultiplierUp's Vignette fades in, a random color of the rainbow, and back out
 local VIGNETTE_IN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local VIGNETTE_OUT_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+-- ControlGui's Speedlines show while the drop's items slide, fading in as they get going, to as
+-- strong as laid out in Studio once they're up to the slide speed before any upgrade. Two copies,
+-- one turned round, take turns: each grows by SPEED_LINES_GROW as it fades in and back out, then
+-- starts again unseen, half a round after the other, so the lines seem to stream out past the edges.
+-- SPEED_LINES_RATE rounds a second and, past that speed, as much faster as the items go, up to
+-- SPEED_LINES_MAX_RATE
+local SPEED_LINES_RATE = 1.5
+local SPEED_LINES_MAX_RATE = 3
+local SPEED_LINES_GROW = 0.2 -- Share bigger
 
 local STEER_ACTION = "SteerItems"
 local STEER_KEYS: { [Enum.KeyCode]: number } = { -- Key -> the side it steers to, -1 left and 1 right
@@ -118,12 +130,19 @@ local valueGradient: UIGradient? = nil
 local multiplierUpTemplate: ImageLabel? = nil
 local vignette: ImageLabel? = nil
 local vignetteTransparency = 0 -- As laid out in Studio, which it fades in to
+local speedLines: { { Image: ImageLabel, Scale: UIScale } } = {} -- The copies that take turns
+local speedLinesTransparency = 0 -- As laid out in Studio, which they fade in to
+local speedLinesRound = 0 -- How far round the first copy is, from 0 to 1
+local dropSpeed = 0 -- How fast the drop's items slide, in slide speeds before any upgrade
 local nextShakeAt = 0
 local random = Random.new()
 local dropView = false
 local outsideBase = false
+local floorsUnlocked = false -- Whether the player's base has a floor above its first
+local floorHolders: { GuiObject } = {} -- The holders the top bar's Next and Back buttons moved into
 local switches = 0 -- Bumped on every switch, so steps left over from the one before stop
 local topSwitches = 0 -- The same, for the top bar, which also changes as the player leaves the base
+local lastTopPressAt = -math.huge -- When a click on the top bar's buttons last went through
 
 local keysHeld: { [Enum.KeyCode]: boolean } = {}
 local stickX = 0
@@ -132,13 +151,19 @@ local pressButton: { [number]: (held: boolean) -> () } = {} -- Side -> holds its
 
 local exitRequested = Instance.new("BindableEvent")
 local homeRequested = Instance.new("BindableEvent")
+local marketRequested = Instance.new("BindableEvent")
 local floorRequested = Instance.new("BindableEvent")
+local dropViewChanged = Instance.new("BindableEvent")
 
 local HudController = {
+	-- Fires with true as the screen switches into the drop view, and false as it switches back
+	DropViewChanged = dropViewChanged.Event,
 	-- Fires when the player asks to leave the drop view with its Exit button
 	ExitRequested = exitRequested.Event,
 	-- Fires when the player asks to go back to their base with the top bar's Base button
 	HomeRequested = homeRequested.Event,
+	-- Fires when the player asks to go to the market with the top bar's Market button
+	MarketRequested = marketRequested.Event,
 	-- Fires with 1 when the player asks for the floor above with the top bar's Next button, and -1
 	-- for the floor below with Back
 	FloorRequested = floorRequested.Event,
@@ -354,6 +379,7 @@ function HudController.SetDropView(on: boolean)
 	end
 	refreshTop()
 	setSteering(on)
+	dropViewChanged:Fire(on)
 end
 
 -- Whether the player has left their base, which swaps the top bar's buttons for the one back to it
@@ -363,6 +389,18 @@ function HudController.SetOutsideBase(outside: boolean)
 	end
 	outsideBase = outside
 	refreshTop()
+end
+
+-- Whether the player's base has a floor above its first. Until it does, the top bar's Next and
+-- Back buttons have nowhere to go, so they're hidden
+function HudController.SetFloorsUnlocked(unlocked: boolean)
+	if unlocked == floorsUnlocked then
+		return
+	end
+	floorsUnlocked = unlocked
+	for _, holder in floorHolders do
+		holder.Visible = unlocked
+	end
 end
 
 -- Where the player is steering their dropping items: -1 left, 1 right, 0 straight on
@@ -439,6 +477,31 @@ function HudController.SetDropTime(seconds: number)
 		if dropView then
 			popTime(label)
 		end
+	end
+end
+
+-- How fast the drop's items slide, as a share of the slide speed before any upgrade: 0 once they've
+-- stopped or the drop's over. The speed lines show by it
+function HudController.SetDropSpeed(share: number)
+	dropSpeed = share
+	for _, layer in speedLines do
+		layer.Image.Visible = share > 0
+	end
+end
+
+-- Every frame the speed lines are on screen, each copy grows and fades a little further round
+local function animateSpeedLines(dt: number)
+	if dropSpeed <= 0 then
+		return
+	end
+	local rate = math.clamp(SPEED_LINES_RATE * dropSpeed, SPEED_LINES_RATE, SPEED_LINES_MAX_RATE)
+	speedLinesRound = (speedLinesRound + rate * dt) % 1
+	local strength = (1 - speedLinesTransparency) * math.min(dropSpeed, 1)
+	for index, layer in speedLines do
+		local round = (speedLinesRound + (index - 1) / #speedLines) % 1
+		layer.Scale.Scale = 1 + round * SPEED_LINES_GROW
+		-- Unseen at the start and end of its round, strongest halfway
+		layer.Image.ImageTransparency = 1 - strength * math.sin(math.pi * round)
 	end
 end
 
@@ -584,12 +647,25 @@ local function addPiece(name: string, gui: GuiObject, side: Side?)
 	}
 end
 
+-- Calls back when the button's clicked, unless one of the top bar's buttons was just clicked
+local function bindTopButton(button: GuiButton, onClick: () -> ())
+	button.Activated:Connect(function()
+		local now = os.clock()
+		if now - lastTopPressAt < TOP_BUTTON_COOLDOWN then
+			return
+		end
+		lastTopPressAt = now
+		onClick()
+	end)
+end
+
 local function bindTop(gui: Instance)
 	local main = gui:WaitForChild("Frame"):WaitForChild("Main")
 	local baseButtons = main:WaitForChild("BaseButtons") :: GuiObject
 	local outsideButtons = main:WaitForChild("OutsideBaseButtons") :: GuiObject
-	local homeButton = outsideButtons:WaitForChild("BaseButton") :: GuiButton
 	-- Found before they're animated, which moves each into a holder of its own
+	local homeButton = outsideButtons:WaitForChild("BaseButton") :: GuiButton
+	local marketButton = baseButtons:WaitForChild("MarketButton") :: GuiButton
 	local floorButtons: { [GuiButton]: number } = { -- Button -> the way it steps through the floors
 		[baseButtons:WaitForChild("NextButton") :: GuiButton] = 1,
 		[baseButtons:WaitForChild("BackButton") :: GuiButton] = -1,
@@ -608,13 +684,21 @@ local function bindTop(gui: Instance)
 	exitButton.Activated:Connect(function()
 		exitRequested:Fire()
 	end)
-	homeButton.Activated:Connect(function()
+	bindTopButton(homeButton, function()
 		homeRequested:Fire()
 	end)
+	bindTopButton(marketButton, function()
+		marketRequested:Fire()
+	end)
+	floorHolders = {}
 	for button, step in floorButtons do
-		button.Activated:Connect(function()
+		bindTopButton(button, function()
 			floorRequested:Fire(step)
 		end)
+		-- The holder takes the button's place in the bar, so it's what hides
+		local holder = button.Parent :: GuiObject
+		holder.Visible = floorsUnlocked
+		table.insert(floorHolders, holder)
 	end
 
 	addPiece("BaseButtons", baseButtons, "Top")
@@ -659,6 +743,22 @@ local function bindControls(gui: Instance)
 	valueScale = scale
 	valueGradient = value:FindFirstChildOfClass("UIGradient")
 	addPiece("Multiplier", multiplierFrame, "Right")
+
+	-- Hidden until the drop's items get going
+	local lines = gui:WaitForChild("Speedlines"):WaitForChild("Speedlines") :: ImageLabel
+	anchorAtMiddle(lines)
+	speedLinesTransparency = lines.ImageTransparency
+	lines.ImageTransparency = 1
+	local turned = lines:Clone()
+	turned.Rotation += 180
+	turned.Parent = lines.Parent
+	speedLines = {}
+	for _, image in { lines, turned } do
+		local scale = Instance.new("UIScale")
+		scale.Parent = image
+		table.insert(speedLines, { Image = image, Scale = scale })
+	end
+	HudController.SetDropSpeed(dropSpeed)
 end
 
 local function bindInventory(gui: Instance)
@@ -720,6 +820,7 @@ function HudController.Start()
 		end
 	end)
 	RunService.RenderStepped:Connect(animateMultiplier)
+	RunService.RenderStepped:Connect(animateSpeedLines)
 end
 
 return HudController

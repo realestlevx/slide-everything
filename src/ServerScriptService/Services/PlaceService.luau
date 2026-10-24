@@ -9,6 +9,9 @@ local SPAWN_OFFSET = Vector3.new(0, 3, 0)
 -- BaseMin and BaseMax attributes, and where its players spawn as SpawnCFrame, so clients can tell
 -- when their player has left the base and send them back even while those parts are streamed out
 local BASE_FOLDER_NAME = "Bottoms"
+-- The market's spawn goes on Workspace.Market as SpawnCFrame too, for the top bar's Market button
+local MARKET_NAME = "Market"
+local MARKET_SPAWN_NAME = "MarketSpawn"
 
 local places: { Folder } = {}
 local owners: { [Folder]: Player } = {}
@@ -147,6 +150,11 @@ function PlaceService.Start()
 		defaultImages[place] = (getBillboard(place) :: any).ImageLabel.Image
 		getBillboard(place).Enabled = false
 		measureBase(place)
+	end
+	local market = workspace:FindFirstChild(MARKET_NAME)
+	local marketSpawn = market and market:FindFirstChild(MARKET_SPAWN_NAME)
+	if marketSpawn and marketSpawn:IsA("BasePart") then
+		market:SetAttribute("SpawnCFrame", marketSpawn.CFrame + SPAWN_OFFSET)
 	end
 
 	for _, player in Players:GetPlayers() do
