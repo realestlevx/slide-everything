@@ -68,6 +68,40 @@ local function getMarkerFloor(marker: BasePart): number
 	return if number then tonumber(number) :: number else 1
 end
 
+-- A place without a later floor's markers gets a copy of a place's that has them, in the same spot in
+-- it, like floor 3's, only in Place1. Done for every place before any slots are placed, as placing
+-- them uses the markers up
+local function shareFloorMarkers(places: { Folder })
+	local folders: { [string]: Instance } = {} -- Folder name -> the first one found with markers in it
+	for _, place in places do
+		for _, folder in place:GetDescendants() do
+			if
+				folder.Name:match(FLOOR_FOLDER_PATTERN)
+				and not folders[folder.Name]
+				and folder:FindFirstChild(SLOT_POSITION_NAME, true)
+			then
+				folders[folder.Name] = folder
+			end
+		end
+	end
+
+	for name, folder in folders do
+		local from = Places.Find(folder) :: Folder
+		for _, place in places do
+			if place:FindFirstChild(name, true) then
+				continue
+			end
+			local copy = folder:Clone()
+			for _, marker in copy:GetDescendants() do
+				if marker:IsA("BasePart") then
+					marker.CFrame = PlaceService.MoveBetween(marker.CFrame, from, place)
+				end
+			end
+			copy.Parent = place
+		end
+	end
+end
+
 -- Puts a copy of the slot template on each of the place's Slot_Position parts, with the part's
 -- attributes and the floor it's on; pass slots get the pass slot template. The part goes once its
 -- slot is there
@@ -98,7 +132,7 @@ local function spawnSlots(place: Folder)
 			slot:SetAttribute(name, value)
 		end
 		slot:SetAttribute("Floor", floor)
-		-- A later floor's markers carry floor 1's prices, which go up from there (see Floors)
+		-- A later floor's markers can carry an earlier floor's prices, which go up from there (see Floors)
 		local price = marker:GetAttribute("Price")
 		if typeof(price) == "number" then
 			slot:SetAttribute("Price", math.round(price * Floors.GetSlotPriceMultiplier(floor)))
@@ -582,6 +616,7 @@ function SlotService.Start()
 		end
 	end)
 
+	shareFloorMarkers(Places.GetAll())
 	for _, place in Places.GetAll() do
 		spawnSlots(place)
 

@@ -34,6 +34,12 @@ function PlaceService.GetPlace(player: Player): Folder?
 	return nil
 end
 
+-- The places are copies of one another, each in its own spot. This takes a CFrame in one place to
+-- the same spot in another, by where each one's Spawn is
+function PlaceService.MoveBetween(cframe: CFrame, from: Folder, to: Folder): CFrame
+	return (to :: any).Spawn.CFrame * (from :: any).Spawn.CFrame:ToObjectSpace(cframe)
+end
+
 local function getBillboard(place: Folder): BillboardGui
 	return (place :: any).OwnerOfPlace.BillboardGui
 end

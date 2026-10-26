@@ -47,7 +47,9 @@ local function build(place: Folder, number: number)
 	floor.Name = name
 	-- Streamed in all at once, so the buyer's client has every part to build it up from as it arrives
 	floor.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
-	floor:PivotTo(spot)
+	-- Turned only as far as the marker is, so a model whose pivot is turned (like Floor3's) still
+	-- faces the way it's built
+	floor:PivotTo(spot * template:GetPivot().Rotation)
 	floor.Parent = place
 end
 
@@ -74,7 +76,8 @@ function FloorService.Add(place: Folder, data: PlayerDataService.Data)
 end
 
 function FloorService.Start()
-	for _, place in Places.GetAll() do
+	local places = Places.GetAll()
+	for _, place in places do
 		-- Each Floor<N>_Position part only marks where its floor goes, and would get in the way of
 		-- the items dropping from the floors above, so it goes once its spot is known
 		spots[place] = {}
@@ -83,11 +86,32 @@ function FloorService.Start()
 			if marker and marker:IsA("BasePart") then
 				spots[place][number] = marker.CFrame
 				marker:Destroy()
-			else
-				warn(`{place:GetFullName()} needs a {Floors.GetMarkerName(number)} part for floor {number} to be built`)
 			end
 		end
+	end
 
+	-- A place without a floor's part builds it in the same spot as a place that has one, like floor
+	-- 3, only marked in Place1
+	for number in Floors.Prices do
+		local from: Folder? = nil
+		for _, place in places do
+			if spots[place][number] then
+				from = place
+				break
+			end
+		end
+		if not from then
+			warn(`A place needs a {Floors.GetMarkerName(number)} part for floor {number} to be built`)
+			continue
+		end
+		for _, place in places do
+			if not spots[place][number] then
+				spots[place][number] = PlaceService.MoveBetween(spots[from][number], from, place)
+			end
+		end
+	end
+
+	for _, place in places do
 		refreshPlace(place)
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
 			refreshPlace(place)
