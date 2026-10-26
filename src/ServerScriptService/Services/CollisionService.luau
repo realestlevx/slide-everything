@@ -4,6 +4,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PLAYERS_GROUP = "Players"
 local ITEMS_GROUP = "Items"
+local ITEM_BARRIERS_GROUP = "ItemBarriers"
+
+-- Walls that keep items in but let players walk through: a part named Items_Barrier anywhere in
+-- Workspace. They're only made solid on a client through its drop (see DropController)
+local ITEM_BARRIER_NAME = "Items_Barrier"
 
 local CollisionService = {}
 
@@ -35,6 +40,15 @@ function CollisionService.Start()
 	PhysicsService:RegisterCollisionGroup(PLAYERS_GROUP)
 	PhysicsService:RegisterCollisionGroup(ITEMS_GROUP)
 	PhysicsService:CollisionGroupSetCollidable(PLAYERS_GROUP, ITEMS_GROUP, false)
+
+	-- Item barriers stop items but let players through
+	PhysicsService:RegisterCollisionGroup(ITEM_BARRIERS_GROUP)
+	PhysicsService:CollisionGroupSetCollidable(PLAYERS_GROUP, ITEM_BARRIERS_GROUP, false)
+	for _, descendant in workspace:GetDescendants() do
+		if descendant.Name == ITEM_BARRIER_NAME then
+			setGroup(descendant, ITEM_BARRIERS_GROUP)
+		end
+	end
 
 	-- Every clone of an item inherits the group
 	for _, descendant in ReplicatedStorage.Items:GetDescendants() do

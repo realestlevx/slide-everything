@@ -5,7 +5,9 @@ local Upgrades = require(script.Parent.Upgrades)
 -- Sliding Time upgrade), and a drop pays in seconds of each item's own income, so it's worth the same
 -- next to the slots whatever the item, its level or how far the player is: every stud an item gets
 -- down the slide pays STUD_SECONDS of its income. A multiplier wall on the slide multiplies what
--- every stud past it pays, not what was made before it, for the items that touch it
+-- every stud past it pays, not what was made before it, for the items that touch it. Every wall an
+-- item goes through raises the ones after it by WALL_GROWTH, for that item, so the walls it misses
+-- cost it
 local Drops = {
 	STUD_SECONDS = 0.05, -- Items get about 200 studs with no upgrades, which pays 10 seconds
 	COOLDOWN = 10, -- Seconds from the start of one drop to the next
@@ -16,6 +18,7 @@ local Drops = {
 	SLIDE_SPEED = 30,
 	SPEED_SHARE = 0.5,
 	MULTIPLIER_ATTRIBUTE = "Multiplier", -- On the walls across the slide
+	WALL_GROWTH = 0.1, -- Added to every wall's multiplier for each one the item's gone through
 	-- A wall with SideToSide on glides across the slide and back, from MoveLeft studs left of where
 	-- it was built to MoveRight studs right of it, as seen looking down the slide
 	SIDE_TO_SIDE_ATTRIBUTE = "SideToSide",
@@ -30,7 +33,7 @@ local Drops = {
 -- A multiplier wall, by how far down the slide it is
 export type Wall = {
 	Along: number, -- Studs
-	Multiplier: number,
+	Multiplier: number, -- Before WALL_GROWTH for the walls the item went through first
 }
 
 function Drops.IsWall(instance: Instance): boolean
@@ -78,12 +81,17 @@ function Drops.GetSlideLine(floor: BasePart): (Vector3, Vector3)
 	return floor.Position, Vector3.new(direction.X, 0, direction.Z).Unit
 end
 
+-- Rounded to hundredths, so a multiplier shows as "1.4x", not "1.4000000000000001x"
+local function round(multiplier: number): number
+	return math.round(multiplier * 100) / 100
+end
+
 -- What a multiplier wall pays for a player, its Multiplier attribute plus what their Slide upgrade
--- (see SignUpgrades) has gone up by: at Slide 1.3x a 1.1x wall pays 1.4x. Rounded to hundredths, so
--- it shows as "1.4x", not "1.4000000000000001x"
-function Drops.GetMultiplier(wall: BasePart, slide: number): number
+-- (see SignUpgrades) has gone up by: at Slide 1.3x a 1.1x wall pays 1.4x. Plus WALL_GROWTH for each
+-- of the walls (hits) the item went through before it
+function Drops.GetMultiplier(wall: BasePart, slide: number, hits: number): number
 	local multiplier = wall:GetAttribute(Drops.MULTIPLIER_ATTRIBUTE) :: number
-	return math.round((multiplier + slide - 1) * 100) / 100
+	return round(multiplier + slide - 1 + hits * Drops.WALL_GROWTH)
 end
 
 -- Adds the part to walls if it's a multiplier wall down the slide from start, keeping them nearest
@@ -97,21 +105,21 @@ function Drops.AddWall(walls: { Wall }, part: BasePart, start: Vector3, directio
 	while index > 1 and walls[index - 1].Along > along do
 		index -= 1
 	end
-	table.insert(walls, index, { Along = along, Multiplier = Drops.GetMultiplier(part, slide) })
+	table.insert(walls, index, { Along = along, Multiplier = Drops.GetMultiplier(part, slide, 0) })
 end
 
 -- A run that got distance studs down the slide, as studs at 1x: each stud counts as many times as
 -- the last of the walls before it multiplies. Walls are the ones the item touched, and only count
--- once it's got as far as them. Also the multiplier it ended at, and how many of the walls it passed
--- multiply at all
+-- once it's got as far as them. Each multiplies by WALL_GROWTH more for every one of them before it.
+-- Also the multiplier it ended at, and how many of the walls it passed multiply at all
 function Drops.Measure(walls: { Wall }, distance: number): (number, number, number)
 	local paid, from, multiplier, passed = 0, 0, 1, 0
-	for _, wall in walls do
+	for index, wall in walls do
 		if wall.Along > distance then
 			break
 		end
 		paid += (wall.Along - from) * multiplier
-		from, multiplier = wall.Along, wall.Multiplier
+		from, multiplier = wall.Along, round(wall.Multiplier + (index - 1) * Drops.WALL_GROWTH)
 		if multiplier > 1 then
 			passed += 1
 		end

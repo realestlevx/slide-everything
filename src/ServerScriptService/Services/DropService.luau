@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
+local Gems = require(ReplicatedStorage.Shared.Gems)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
@@ -15,6 +16,9 @@ local DropResult = ReplicatedStorage.Remotes.DropResult
 
 local DROP_BUTTON_NAME = "Drop_Button" -- Model in a place holding the prompt that drops its items
 local COLLECT_NAME = "Collect" -- Model in a place with the collect pad and its prompt
+-- The collect prompt sits on the pad's front edge, so the stack of items on the pad hid it from every
+-- other side. It's seen through the stack, and reaches round to the back of the pad
+local COLLECT_REACH = 20 -- Studs
 local DROP_FLOOR_NAME = "DropPart" -- Under a place's slots; the way down its slide is measured from it
 local COOLDOWN_SLACK = 0.5 -- Seconds. The client checks the cooldown on its own clock, a little ahead
 local RESULT_SLACK = 5 -- Seconds past the drop's time that results may still arrive in, with lag
@@ -39,10 +43,12 @@ type Drop = {
 	-- Down the place's slide, nearest first, at the owner's Slide upgrade when it started
 	Walls: { Drops.Wall },
 	Items: { [string]: DroppedItem }, -- Slot key -> what was in it
+	GemChanceUsed: boolean, -- A collect has had its chance of finding gems for this drop
 }
 
 local drops: { [Player]: Drop } = {} -- Each player's latest drop
 local walls: { [BasePart]: boolean } = {} -- Every multiplier wall
+local rng = Random.new()
 
 local DropService = {}
 
@@ -96,6 +102,7 @@ local function onDrop(place: Folder, player: Player)
 		Time = SignUpgradeService.GetValue(player, "SlideTime"),
 		Walls = slideWalls,
 		Items = dropped,
+		GemChanceUsed = false,
 	}
 end
 
@@ -156,7 +163,23 @@ local function onResult(player: Player, slotKey: any, distance: any, alongs: any
 	end
 end
 
--- The collect pad's prompt: everything waiting there goes into the player's money
+-- A collect may find gems, more the more the player earns (see Gems). Only one collect a drop gets
+-- the chance, once the drop's time is up: a drop can be ended early, and collecting straight after
+-- each would find gems far more often than drops that run their full time. The client's clock runs
+-- a little ahead, as with the cooldown
+local function findGems(player: Player, data: PlayerDataService.Data)
+	local drop = drops[player]
+	if not drop or drop.GemChanceUsed or os.clock() - drop.StartedAt < drop.Time - COOLDOWN_SLACK then
+		return
+	end
+	drop.GemChanceUsed = true
+	if rng:NextNumber() < Gems.COLLECT_CHANCE then
+		PlayerDataService.AddGems(player, Gems.GetFind(data.MoneyPerSecond))
+	end
+end
+
+-- The collect pad's prompt: everything waiting there goes into the player's money, and it may find
+-- them some gems
 local function onCollect(place: Folder, player: Player)
 	local data = PlayerDataService.Get(player)
 	if place:GetAttribute("OwnerUserId") ~= player.UserId or not data then
@@ -170,6 +193,7 @@ local function onCollect(place: Folder, player: Player)
 	data.CollectCash = 0
 	table.clear(data.CollectItems)
 	updatePlace(place)
+	findGems(player, data)
 end
 
 local function findPrompt(place: Folder, name: string): ProximityPrompt?
@@ -204,6 +228,8 @@ function DropService.Start()
 
 		local collectPrompt = findPrompt(place, COLLECT_NAME)
 		if collectPrompt then
+			collectPrompt.RequiresLineOfSight = false
+			collectPrompt.MaxActivationDistance = COLLECT_REACH
 			collectPrompt.Triggered:Connect(function(player)
 				onCollect(place, player)
 			end)

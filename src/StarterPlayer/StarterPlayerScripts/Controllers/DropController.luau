@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
@@ -14,6 +15,7 @@ local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local CollectController = require(script.Parent.CollectController)
 local HudController = require(script.Parent.HudController)
+local MultiplierWallController = require(script.Parent.MultiplierWallController)
 local PromptController = require(script.Parent.PromptController)
 local SlotController = require(script.Parent.SlotController)
 
@@ -29,6 +31,10 @@ local SLIDE_NAME = "Ground_Slide"
 -- Walls the items slide along without losing any speed down the slide, like the ones that funnel the
 -- outer places' items in toward the middle. Blocks, at any angle
 local BARRIER_NAME = "Slippery_Barrier"
+-- Walls round each place's slots that keep its items in as they fall. Solid on this client through
+-- its drop only: a part that can collide also blocks raycasts, like the prompts' line of sight, and
+-- players walk among the slots in between
+local ITEM_BARRIER_NAME = "Items_Barrier"
 local SLOT_ITEM_NAME = "SlotItem"
 
 -- Dropped items barely grip, and their grip outweighs the slide's, so they slide down even the
@@ -46,9 +52,10 @@ local STEER_MULTIPLIER = 1.5
 -- slide speed before any upgrade; higher is tighter. It grows with the slide speed, so they take it up
 -- over the same stretch of slide however fast they go, instead of running on straight for longer
 local SIDE_GRIP = 8
--- They're drawn in toward the middle of the pack, so they slide down together and steer as one
-local PACK_RADIUS = 3 -- Studs either side of the middle where nothing pulls
-local PACK_PULL = 2 -- Studs per second of pull for every stud further out than that
+-- They're drawn in toward the middle of the pack, so they slide down together and steer as one, but
+-- loosely: near the middle nothing pulls, so they keep the scatter they landed with
+local PACK_RADIUS = 10 -- Studs either side of the middle where nothing pulls
+local PACK_PULL = 1 -- Studs per second of pull for every stud further out than that
 local MAX_PACK_PULL = 8 -- Studs per second
 -- Items can't be steered up ground that slopes across the slide, like the funnel's sides, and nothing
 -- holds them up there, so they slide back down. How far the ground's normal leans across, as the
@@ -56,10 +63,12 @@ local MAX_PACK_PULL = 8 -- Studs per second
 local FLAT_TILT = 0.15
 local STEEP_TILT = 0.35
 -- Items behind the front one, like those dropped from a higher floor that land later or ones held up
--- by something they hit, slide faster until they've caught up with it. The further back, the faster:
+-- by something they hit, slide faster until they're within PACK_LENGTH of it, so the pack strings out
+-- a little down the slide instead of bunching up behind the front. The further back, the faster:
 -- each one goes fast enough to close its gap in about CATCH_UP_TIME, so one twice as far back goes
 -- twice as much faster. Near the pack that's only a little, so they drift back into it instead of
 -- shooting forward, and they slow down as the gap closes
+local PACK_LENGTH = 15 -- Studs behind the front one
 local CATCH_UP_TIME = 1.5 -- Seconds
 local MAX_CATCH_UP = 1.5 -- Share of the slide speed, so up to 2.5x as fast
 local CATCH_UP_EASE = 2 -- How quickly an item takes up a faster speed; higher is sooner
@@ -97,6 +106,15 @@ local FOLLOW_PITCH = math.rad(31)
 -- Studs down the slide past the items that the camera looks. The pack sits in the lower third of the
 -- screen, with the slide ahead and the walls coming up on it above
 local LOOK_AHEAD = 44
+-- When the items spread out, the camera backs off along the same line, looking as much further ahead
+-- so the view keeps its shape, until every one of them is in view with FRAME_MARGIN of the screen to
+-- spare around them. Up to MAX_ZOOM times as far. How quickly it backs off, and comes back in once
+-- they've closed up; higher is sooner. It comes back in slower, so it doesn't bob in and out as they
+-- shuffle about
+local FRAME_MARGIN = 0.15 -- Share of the way from the middle of the screen to its edge
+local MAX_ZOOM = 2.5
+local ZOOM_OUT_SHARPNESS = 3
+local ZOOM_IN_SHARPNESS = 1
 -- The slope's first measured this far down the slide from Start, before any item's on it, then
 -- under the items as they go. How quickly the camera takes up a new slope; higher is sooner
 local SLOPE_PROBE = 150 -- Studs
@@ -128,6 +146,7 @@ local RETURN_SHARPNESS = 6
 -- Gliding back up to the player after a drop, the camera climbs faster than it comes across, so it
 -- rises off the slide before it reaches the ground at the top instead of cutting through its edge
 local RISE_SHARPNESS = 12
+local RETURN_SOUND_NAME = "Woosh" -- Sound in SoundService.SFX, played as the camera sets off back to the player
 -- When the items up front finish and the ones left are further back, the camera glides back to them
 -- still looking down the slide, instead of turning round to look back at them
 local BACK_SPEED = 12 -- Studs per second
@@ -198,10 +217,13 @@ type Drop = {
 	-- Nil until the first frame
 	Side: number?,
 	Slope: number, -- Radians the slide falls away down the way down, eased in (see SLOPE_SHARPNESS)
+	Zoom: number, -- Times as far back as usual that the camera's backed off, eased in (see MAX_ZOOM)
 	-- Studs per second the pack goes down the slide, across the ground, eased in (see SPEED_SHARPNESS)
 	PackSpeed: number,
 	Barriers: { BasePart }, -- See BARRIER_NAME
+	ItemBarriers: { BasePart }, -- See ITEM_BARRIER_NAME
 	-- Finds the walls between the camera and the items and the ground under the items, but not the items
+	-- or the item barriers
 	WorldRay: RaycastParams,
 }
 
@@ -286,6 +308,19 @@ local function showStats(current: Drop)
 	HudController.SetDropTime(math.max(current.EndsAt - os.clock(), 0))
 end
 
+-- Every wall an item goes through raises the ones after it, for that item. The walls show them
+-- raised by the most walls any item still sliding has gone through, so they're back as they were
+-- once the drop's over
+local function showHits(current: Drop)
+	local hits = 0
+	for _, dropped in current.Items do
+		if not dropped.Done then
+			hits = math.max(hits, #dropped.Gates)
+		end
+	end
+	MultiplierWallController.SetHits(hits)
+end
+
 -- The item's run is over: it fades off the slide for the pile on the collect pad, and the server
 -- hears how far it got and which walls it touched, by how far down the slide they are, which it pays
 -- out. A wall far behind may have streamed out by now, so it isn't sent itself
@@ -295,6 +330,7 @@ local function finishItem(current: Drop, dropped: DroppedItem)
 	end
 	measure(current, dropped)
 	dropped.Done = true
+	showHits(current)
 	local gates = {}
 	for _, gate in dropped.Gates do
 		table.insert(gates, gate.Along)
@@ -344,12 +380,15 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		Steerable = false,
 		Done = false,
 	}
-	-- Walls are touched where this client shows them, as they glide across the slide
+	-- Walls are touched where this client shows them, as they glide across the slide. The wall pops
+	-- before the rest go up, so its copy keeps what the item went through
 	for _, part in parts do
 		part.Touched:Connect(function(hit)
 			if not dropped.Done and not dropped.TouchedWalls[hit] and Drops.IsWall(hit) then
 				dropped.TouchedWalls[hit] = true
 				Drops.AddWall(dropped.Gates, hit, current.Start, current.Direction, current.Slide)
+				MultiplierWallController.Pop(hit)
+				showHits(current)
 			end
 		end)
 	end
@@ -401,15 +440,56 @@ local function endDrop()
 	for opening, canCollide in current.Openings do
 		opening.CanCollide = canCollide
 	end
+	for _, barrier in current.ItemBarriers do
+		barrier.CanCollide = false
+	end
 	task.delay(math.max(Drops.COOLDOWN - (os.clock() - current.StartedAt), 0), function()
 		if drop == nil then
 			PromptController.SetHidden(current.Place, current.Prompt, false)
 		end
 	end)
 	SlotController.SetFaded(current.Place, false)
+	MultiplierWallController.SetFadeScale(1)
 	setFrozen(false)
 	HudController.SetDropView(false)
 	-- The camera glides back on its own from here
+	local sfx = SoundService:FindFirstChild("SFX")
+	local sound = sfx and sfx:FindFirstChild(RETURN_SOUND_NAME)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
+	end
+end
+
+-- How many times as far back as usual the camera has to be to have every item in view, with
+-- FRAME_MARGIN to spare. Away is where it usually is from what it follows, and ahead where it looks
+-- from there. Backing off scales both, so it looks the same way however far back it is: an item stays
+-- just as far across from it, and what it follows gets further ahead of it and further down the
+-- screen, so each edge of the screen an item has to clear gives the zoom that takes
+local function getZoom(active: { DroppedItem }, followed: Vector3, away: Vector3, ahead: Vector3): number
+	local viewport = workspace.CurrentCamera.ViewportSize
+	local tanUp = math.tan(math.rad(cameraFov) / 2) * (1 - FRAME_MARGIN)
+	local tanAcross = tanUp * viewport.X / math.max(viewport.Y, 1)
+	local forward = (ahead - away).Unit
+	local right = forward:Cross(Vector3.yAxis).Unit
+	local up = right:Cross(forward)
+	-- What it follows, from the camera: how far ahead, and how far up the screen
+	local depth, height = -away:Dot(forward), -away:Dot(up)
+	local zoom = 1
+	for _, dropped in active do
+		local part = dropped.Part
+		local position = part.Position
+		-- Up on the slide when it's gone off it, as the camera stays
+		local offset = Vector3.new(position.X, math.max(position.Y, dropped.SlideY), position.Z) - followed
+		local reach = part.Size.Magnitude / 2
+		local front, across, above = offset:Dot(forward), math.abs(offset:Dot(right)), offset:Dot(up)
+		zoom = math.max(
+			zoom,
+			((across + reach) / tanAcross - front) / depth, -- The screen's sides
+			(reach - above - tanUp * front) / (height + tanUp * depth), -- Its bottom
+			(above + reach - tanUp * front) / (tanUp * depth - height) -- Its top
+		)
+	end
+	return math.min(zoom, MAX_ZOOM)
 end
 
 -- Once the drop's time is up, every item finishes where it is. Before that, items that come to rest,
@@ -503,7 +583,7 @@ local function followItems(current: Drop, dt: number)
 		local catchUp = 0
 		if dropped.Steerable then
 			local behind = lead - (part.Position - current.Start):Dot(current.Direction)
-			catchUp = math.clamp((behind - PACK_RADIUS) / CATCH_UP_TIME, 0, current.SlideSpeed * MAX_CATCH_UP)
+			catchUp = math.clamp((behind - PACK_LENGTH) / CATCH_UP_TIME, 0, current.SlideSpeed * MAX_CATCH_UP)
 		end
 		local maxSpeed = current.SlideSpeed + catchUp
 		if forward.Magnitude > maxSpeed then
@@ -592,13 +672,20 @@ local function followItems(current: Drop, dt: number)
 	local downSlide = current.Direction * math.cos(slope) - Vector3.yAxis * math.sin(slope)
 	local upSlide = current.Direction * math.sin(slope) + Vector3.yAxis * math.cos(slope)
 	local offset = (upSlide * math.sin(FOLLOW_PITCH) - downSlide * math.cos(FOLLOW_PITCH)) * FOLLOW_DISTANCE
+	local ahead = downSlide * LOOK_AHEAD
+	-- Backed off far enough to have them all in view (see MAX_ZOOM)
+	local zoom = getZoom(active, followed, offset, ahead)
+	local zoomSharpness = if zoom > current.Zoom then ZOOM_OUT_SHARPNESS else ZOOM_IN_SHARPNESS
+	current.Zoom += (zoom - current.Zoom) * (1 - math.exp(-zoomSharpness * dt))
+	MultiplierWallController.SetFadeScale(current.Zoom)
+	offset *= current.Zoom
 	-- In front of any wall that would come between, like the funnel's
 	local hit = workspace:Raycast(followed, offset, current.WorldRay)
-	local distance = if hit then math.max(hit.Distance - WALL_GAP, WALL_GAP) else FOLLOW_DISTANCE
+	local distance = if hit then math.max(hit.Distance - WALL_GAP, WALL_GAP) else offset.Magnitude
 	-- Led by how far the pack goes while each catches up (see MOVE_SHARPNESS)
 	local velocity = (current.Direction - Vector3.yAxis * math.tan(slope)) * current.PackSpeed
 	goalPosition = followed + offset.Unit * distance + velocity / MOVE_SHARPNESS
-	goalLookAt = followed + downSlide * LOOK_AHEAD + velocity / LOOK_SHARPNESS
+	goalLookAt = followed + ahead * current.Zoom + velocity / LOOK_SHARPNESS
 
 	-- With streaming, parts of the slide far from the character may not be loaded on this client yet
 	if os.clock() - lastStreamRequest > STREAM_INTERVAL then
@@ -742,9 +829,12 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		slope = math.atan2(probe.Normal:Dot(direction), probe.Normal.Y)
 	end
 	local barriers: { BasePart } = {}
+	local itemBarriers: { BasePart } = {}
 	for _, descendant in workspace:GetDescendants() do
 		if descendant.Name == BARRIER_NAME and descendant:IsA("BasePart") then
 			table.insert(barriers, descendant)
+		elseif descendant.Name == ITEM_BARRIER_NAME and descendant:IsA("BasePart") then
+			table.insert(itemBarriers, descendant)
 		end
 	end
 
@@ -781,8 +871,10 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Followed = nil,
 		Side = nil,
 		Slope = slope,
+		Zoom = 1,
 		PackSpeed = 0,
 		Barriers = barriers,
+		ItemBarriers = itemBarriers,
 		WorldRay = worldRay,
 	}
 	drop = current
@@ -799,11 +891,17 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	if LocalPlayer.Character then
 		table.insert(ignored, LocalPlayer.Character)
 	end
+	for _, barrier in itemBarriers do
+		table.insert(ignored, barrier)
+	end
 	worldRay.FilterDescendantsInstances = ignored
 
 	-- Opened on this client only, so nothing else falls through
 	for opening in openings do
 		opening.CanCollide = false
+	end
+	for _, barrier in itemBarriers do
+		barrier.CanCollide = true
 	end
 	PromptController.SetHidden(place, prompt, true)
 	SlotController.SetFaded(place, true)

@@ -19,7 +19,6 @@ local MoveHotbarItem = ReplicatedStorage.Remotes.MoveHotbarItem
 local DeleteItems = ReplicatedStorage.Remotes.DeleteItems
 
 local HELD_NAME = "HeldItem"
-local HELD_SIZE = 4 -- Studs; bigger items are shrunk to this along their longest side
 local HELD_GAP = 0.3 -- Studs from the hand's grip to the back of the item, so the hand isn't inside it
 -- BillboardGui in ReplicatedStorage shown over the held item, if there is one
 local HELD_BILLBOARD_NAME = "HeldItemBillboard"
@@ -238,12 +237,12 @@ local function updateHeldItem(player: Player)
 		return
 	end
 
-	-- Turned with the character, like an item on its roll stand
+	-- Turned with the character, like an item on its roll stand. As big as it shows in a slot at its
+	-- level (see Upgrades.GetSize); it's only upgraded in a slot, so that can't change while it's held
 	local held = Rolling.CreateDisplay(item, root)
 	local turn = root.CFrame.Rotation:ToObjectSpace(held.CFrame.Rotation)
 	held.Name = HELD_NAME
-	local longestSide = math.max(held.Size.X, held.Size.Y, held.Size.Z)
-	ItemModel.SetScale(held, math.min(1, HELD_SIZE / longestSide))
+	ItemModel.SetScale(held, Upgrades.GetSize(Upgrades.GetLevel(owned :: Items.OwnedItem)))
 	held.Massless = true
 	held.Anchored = false
 

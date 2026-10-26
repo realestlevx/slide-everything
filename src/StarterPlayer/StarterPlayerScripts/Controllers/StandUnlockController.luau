@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Places = require(ReplicatedStorage.Shared.Places)
@@ -21,6 +22,7 @@ local VIEW_DISTANCE = 16 -- Studs from the stand the camera looks at it from, to
 local VIEW_HEIGHT = 8
 local START_SCALE = 0.01 -- Models can't be scaled to 0
 local STAND_TIMEOUT = 3 -- Seconds to wait for the bought stand to stream in; it just appears if it's later
+local MOVE_SOUND_NAME = "Woosh" -- Sound in SoundService.SFX, played as the camera flies over and as it flies back
 
 local expected: { [Folder]: number } = {} -- The stand number each place's owner just bought, not here yet
 local queue: { () -> () } = {}
@@ -48,6 +50,14 @@ local function enqueue(reveal: () -> ())
 		table.remove(queue, 1)()
 	end
 	playing = false
+end
+
+local function playMoveSound()
+	local sfx = SoundService:FindFirstChild("SFX")
+	local sound = sfx and sfx:FindFirstChild(MOVE_SOUND_NAME)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
+	end
 end
 
 local function tweenAndWait(instance: Instance, info: TweenInfo, goal: { [string]: any })
@@ -93,6 +103,7 @@ local function reveal(stand: Model, setScale: (number) -> (), center: Vector3)
 		away = if away.Magnitude > 0.01 then away.Unit else Vector3.zAxis
 		local viewPosition = center + away * VIEW_DISTANCE + Vector3.yAxis * VIEW_HEIGHT
 		camera.CameraType = Enum.CameraType.Scriptable
+		playMoveSound()
 		tweenAndWait(camera, CAMERA_MOVE, { CFrame = CFrame.lookAt(viewPosition, center) })
 	end
 
@@ -105,6 +116,7 @@ local function reveal(stand: Model, setScale: (number) -> (), center: Vector3)
 
 	if moveCamera then
 		task.wait(HOLD_TIME)
+		playMoveSound()
 		tweenAndWait(camera, CAMERA_MOVE, { CFrame = returnCFrame })
 		camera.CameraType = Enum.CameraType.Custom
 	end

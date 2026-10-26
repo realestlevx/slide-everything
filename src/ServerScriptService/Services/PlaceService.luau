@@ -12,6 +12,11 @@ local BASE_FOLDER_NAME = "Bottoms"
 -- The market's spawn goes on Workspace.Market as SpawnCFrame too, for the top bar's Market button
 local MARKET_NAME = "Market"
 local MARKET_SPAWN_NAME = "MarketSpawn"
+-- Each player's own base stays streamed in on their client wherever their character goes, like far
+-- down the slide through a drop. Without it the base streamed out there, and about 18k instances came
+-- back at once as the drop ended: 2 seconds of 80-220 ms frames. It streams around this part in the
+-- place, which has to be a BasePart
+local FOCUS_NAME = "Spawn"
 
 local places: { Folder } = {}
 local owners: { [Folder]: Player } = {}
@@ -110,6 +115,10 @@ local function onPlayerAdded(player: Player)
 	owners[place] = player
 	place:SetAttribute("OwnerUserId", player.UserId)
 	player:SetAttribute("Place", place.Name)
+	local focus = place:FindFirstChild(FOCUS_NAME)
+	if focus and focus:IsA("BasePart") then
+		player:AddReplicationFocus(focus)
+	end
 
 	local billboard = getBillboard(place);
 	(billboard :: any).ImageLabel.Image = defaultImages[place]

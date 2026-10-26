@@ -431,15 +431,14 @@ local function givePlacingUp(slot: Model, entry: Placing)
 	end
 end
 
--- A copy of the held item flies from the hand to the slot in an arc, growing to its full size and
--- turning to how it floats there. Made on this screen only, as the prompt fires
+-- A copy of the held item flies from the hand to the slot in an arc, turning to how it floats there.
+-- Made on this screen only, as the prompt fires
 local function flyIn(slot: Model, slotPart: BasePart, item: Items.Item, held: BasePart)
 	local copy = Rolling.CreateDisplay(item, slotPart)
 	local entry: Placing = { Copy = copy, Rest = copy.CFrame, Held = held, Landed = false }
 	local from = held.CFrame
-	-- The held one is a copy shrunk evenly to fit the hand
-	local fromScale = held.Size.X / copy.Size.X
-	ItemModel.SetScale(copy, fromScale)
+	-- The held one is already its level's size, the size it shows in the slot, so it keeps it
+	ItemModel.SetScale(copy, held.Size.X / copy.Size.X)
 	ItemModel.PivotTo(copy, from)
 	copy.Parent = workspace
 	placing[slot] = entry
@@ -461,7 +460,6 @@ local function flyIn(slot: Model, slotPart: BasePart, item: Items.Item, held: Ba
 		local top = (from.Position + target.Position) / 2 + Vector3.yAxis * FLY_ARC
 		local position = from.Position:Lerp(top, eased):Lerp(top:Lerp(target.Position, eased), eased)
 		copy.CFrame = from.Rotation:Lerp(target.Rotation, eased) + position
-		ItemModel.SetScale(copy, fromScale + (1 - fromScale) * eased)
 		if alpha >= 1 then
 			connection:Disconnect()
 			entry.Landed = true

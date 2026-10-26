@@ -77,7 +77,7 @@ type Entry = {
 type Press = {
 	Input: InputObject,
 	Uid: string,
-	From: number?, -- The hotbar position it's in, nil if it's in the backpack
+	From: number?, -- The hotbar position it was pressed on, nil if it was pressed in the backpack
 	Button: ImageButton,
 	Start: Vector2,
 	At: Vector2,
@@ -328,8 +328,8 @@ local function isOver(gui: GuiObject, at: Vector2): boolean
 	return at.X >= topLeft.X and at.X <= bottomRight.X and at.Y >= topLeft.Y and at.Y <= bottomRight.Y
 end
 
--- Dropped on a hotbar position, the item goes there. Dropped anywhere on the backpack, an item from
--- the hotbar goes back into the backpack. Anywhere else, it stays where it was, unfaded
+-- Dropped on a hotbar position, the item goes there. Dropped anywhere on the backpack, an item
+-- picked up from the hotbar leaves it. Anywhere else, it stays where it was, unfaded
 local function drop(current: Press, at: Vector2)
 	for position, button in hotbarButtons do
 		if button.Visible and isOver(button, at) then

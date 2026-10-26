@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
 local Floors = require(ReplicatedStorage.Shared.Floors)
@@ -11,8 +12,9 @@ local LocalPlayer = Players.LocalPlayer
 
 -- When the player buys a floor from the sign, it's built up in front of them: the camera flies over to
 -- look at it, and its parts drop into place one after another, bottom first, fading in as they come,
--- while the view slowly zooms in. Then the zoom snaps back, the floor's slots fade in and the camera
--- flies back. On their screen only; everyone else just sees the floor appear
+-- while the view slowly zooms in and SFX.Build.Charge plays. A moment after the last part lands,
+-- Finish plays, the zoom snaps back, the floor's slots fade in and the camera flies back. On their
+-- screen only; everyone else just sees the floor appear
 local BUILD_TIME = 3.5 -- Seconds from the first part setting off to the last one landing
 local PART_TIME = 0.7 -- Seconds each part takes to drop into place
 local PART_DROP = 12 -- Studs above where it goes that each part drops from
@@ -27,6 +29,8 @@ local VIEW_MARGIN = 1.1 -- Room around the floor once the view has zoomed in all
 local FOV_ZOOM = 15 -- How far the field of view drops while the floor builds
 local FOV_ZOOM_IN = TweenInfo.new(BUILD_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
 local FOV_SNAP_BACK = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+-- Seconds from the last part landing to Finish playing, which also lets Charge play out
+local FINISH_DELAY = 0.5
 local HOLD_TIME = 0.6 -- Seconds the camera stays on the built floor before flying back
 local SLOT_FADE = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FLOOR_TIMEOUT = 5 -- Seconds to wait for the bought floor to stream in; its slots just show if it's later
@@ -56,6 +60,16 @@ local function tweenAndWait(instance: Instance, info: TweenInfo, goal: { [string
 	local tween = TweenService:Create(instance, info, goal)
 	tween:Play()
 	tween.Completed:Wait()
+end
+
+-- Played from the client, so only this player hears them
+local function playSound(name: string) -- Sound in SoundService.SFX.Build
+	local sfx = SoundService:FindFirstChild("SFX")
+	local folder = sfx and sfx:FindFirstChild("Build")
+	local sound = folder and folder:FindFirstChild(name)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
+	end
 end
 
 -- The floor's slots wait for the floor under them: hidden on this screen while it builds, then faded
@@ -214,7 +228,10 @@ local function reveal(place: Folder, number: number, pieces: { Piece }, box: CFr
 		TweenService:Create(camera, FOV_ZOOM_IN, { FieldOfView = restingFov - FOV_ZOOM }):Play()
 	end
 
+	playSound("Charge")
 	build(pieces)
+	task.wait(FINISH_DELAY)
+	playSound("Finish")
 	setSlotsHidden(place, number, false)
 
 	if moveCamera then

@@ -48,6 +48,10 @@ local TICK_POP_DRIFT = 0.25 -- Timer widths it may drift to either side as it go
 local TICK_POP_GROW_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local TICK_POP_RISE_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local TICK_POP_FADE_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades mostly at the end
+-- And a clock sound in SoundService.SFX.Sliding plays: Clock1 on the drop's first tick, Clock2 on its
+-- second, and so on by turns
+local SLIDING_SOUNDS_NAME = "Sliding"
+local CLOCK_SOUND_NAMES = { "Clock1", "Clock2" }
 
 -- The multiplier's colors scroll through the rainbow. The gradient's colors are made again every
 -- frame, each a little further round, instead of sliding its Offset, which leaves a flat color
@@ -91,6 +95,10 @@ local VIGNETTE_OUT_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingD
 local SPEED_LINES_RATE = 1.5
 local SPEED_LINES_MAX_RATE = 3
 local SPEED_LINES_GROW = 0.2 -- Share bigger
+-- SFX.Sliding.Sliding loops while they slide, getting louder as they get going, to as loud as set in
+-- Studio at the slide speed before any upgrade, and fading out once they stop
+local SLIDING_SOUND_NAME = "Sliding"
+local SLIDING_FADE_SHARPNESS = 8
 
 local STEER_ACTION = "SteerItems"
 local STEER_KEYS: { [Enum.KeyCode]: number } = { -- Key -> the side it steers to, -1 left and 1 right
@@ -134,6 +142,10 @@ local speedLines: { { Image: ImageLabel, Scale: UIScale } } = {} -- The copies t
 local speedLinesTransparency = 0 -- As laid out in Studio, which they fade in to
 local speedLinesRound = 0 -- How far round the first copy is, from 0 to 1
 local dropSpeed = 0 -- How fast the drop's items slide, in slide speeds before any upgrade
+local clockTicks = 0 -- Times the timer's ticked down since the drop view came in
+local slidingSound: Sound? = nil -- A looping copy of SFX.Sliding.Sliding
+local slidingVolume = 0 -- Its volume as set in Studio
+local slidingLevel = 0 -- Share of that it's at now
 local nextShakeAt = 0
 local random = Random.new()
 local dropView = false
@@ -373,6 +385,9 @@ function HudController.SetDropView(on: boolean)
 		return
 	end
 	dropView = on
+	if on then
+		clockTicks = 0
+	end
 	switches += 1
 	for _, sequence in SEQUENCES do
 		task.spawn(playSequence, sequence, switches)
@@ -464,6 +479,21 @@ local function popTime(label: TextLabel)
 	task.delay(TICK_POP_FADE_INFO.Time, pop.Destroy, pop)
 end
 
+local function findSlidingSound(name: string): Sound? -- Sound in SoundService.SFX.Sliding
+	local sfx = SoundService:FindFirstChild("SFX")
+	local folder = sfx and sfx:FindFirstChild(SLIDING_SOUNDS_NAME)
+	local sound = folder and folder:FindFirstChild(name)
+	return if sound and sound:IsA("Sound") then sound else nil
+end
+
+local function playClock()
+	clockTicks += 1
+	local sound = findSlidingSound(CLOCK_SOUND_NAMES[(clockTicks - 1) % #CLOCK_SOUND_NAMES + 1])
+	if sound then
+		sound:Play()
+	end
+end
+
 -- Seconds left in the drop, counting down as m:ss
 function HudController.SetDropTime(seconds: number)
 	local label = timeLabel
@@ -476,6 +506,7 @@ function HudController.SetDropTime(seconds: number)
 		label.Text = text
 		if dropView then
 			popTime(label)
+			playClock()
 		end
 	end
 end
@@ -502,6 +533,38 @@ local function animateSpeedLines(dt: number)
 		layer.Scale.Scale = 1 + round * SPEED_LINES_GROW
 		-- Unseen at the start and end of its round, strongest halfway
 		layer.Image.ImageTransparency = 1 - strength * math.sin(math.pi * round)
+	end
+end
+
+-- Every frame, the slide's sound eases towards how loud the items' speed makes it, and stops once
+-- it's faded right out
+local function updateSlidingSound(dt: number)
+	local goal = math.min(dropSpeed, 1)
+	local sound = slidingSound
+	if not sound then
+		local original = if goal > 0 then findSlidingSound(SLIDING_SOUND_NAME) else nil
+		if not original then
+			return
+		end
+		sound = original:Clone()
+		sound.Name = "SlidingLoop"
+		sound.Looped = true
+		sound.Volume = 0
+		sound.Parent = original.Parent
+		slidingVolume = original.Volume
+		slidingSound = sound
+	end
+	slidingLevel += (goal - slidingLevel) * (1 - math.exp(-SLIDING_FADE_SHARPNESS * dt))
+	if goal <= 0 and slidingLevel < 0.01 then
+		slidingLevel = 0
+		if sound.IsPlaying then
+			sound:Stop()
+		end
+		return
+	end
+	sound.Volume = slidingVolume * slidingLevel
+	if not sound.IsPlaying then
+		sound:Play()
 	end
 end
 
@@ -725,14 +788,16 @@ local function bindControls(gui: Instance)
 	end
 	addPiece("ControlFrame", frame, nil)
 
-	local timer = gui:WaitForChild("Time") :: GuiObject
+	-- The timer and the multiplier share a bar, the timer at its left end and the multiplier at its right
+	local timeAndMultiplier = gui:WaitForChild("Time/Multiplier")
+	local timer = timeAndMultiplier:WaitForChild("Time") :: GuiObject
 	timeLabel = timer:WaitForChild("Time") :: TextLabel
 	local icon = timer:WaitForChild("Icon") :: GuiObject
 	icon.Rotation = -ICON_TILT
 	TweenService:Create(icon, ICON_SWING_INFO, { Rotation = ICON_TILT }):Play()
 	addPiece("Time", timer, "Left")
 
-	local multiplierFrame = gui:WaitForChild("Multiplier") :: GuiObject
+	local multiplierFrame = timeAndMultiplier:WaitForChild("Multiplier") :: GuiObject
 	local value = multiplierFrame:WaitForChild("Value") :: TextLabel
 	anchorAtMiddle(value)
 	valueRest = value.Position
@@ -821,6 +886,7 @@ function HudController.Start()
 	end)
 	RunService.RenderStepped:Connect(animateMultiplier)
 	RunService.RenderStepped:Connect(animateSpeedLines)
+	RunService.RenderStepped:Connect(updateSlidingSound)
 end
 
 return HudController
