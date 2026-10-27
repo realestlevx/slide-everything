@@ -22,6 +22,8 @@ local PROFILE_TEMPLATE = {
 	LastRolls = {} :: { [string]: string },
 	CollectCash = 0, -- Earned by drops, waiting on the place's collect pad to be picked up
 	CollectItems = {} :: { string }, -- Item Ids of the latest finished drops, piled on the collect pad
+	-- How loud sound effects play for them, 0 to 1 of how loud they're mixed; set in the settings menu
+	SfxVolume = 1,
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
@@ -91,6 +93,7 @@ local function onPlayerAdded(player: Player)
 		player:SetAttribute("Money", profile.Data.Money)
 		player:SetAttribute("Gems", profile.Data.Gems)
 		player:SetAttribute("MoneyPerSecond", profile.Data.MoneyPerSecond)
+		player:SetAttribute("SfxVolume", profile.Data.SfxVolume)
 		loaded:Fire(player)
 	else
 		profile:EndSession()

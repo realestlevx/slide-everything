@@ -7,6 +7,12 @@ local PRESS_SCALE = 0.9 -- And shrink to this while held down
 local PRESS_INFO = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local RELEASE_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out) -- Springs back up
 
+local PULSE_SCALE = 1.5 -- A click's pulse grows to this size of the button
+local PULSE_GROW_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local PULSE_FILL_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out) -- The white fill fades first
+local PULSE_STROKE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Then its outline
+local PULSE_FILL_TRANSPARENCY = 0.4 -- How see-through the fill starts
+
 -- Constraints that shape a gui's box; the holder needs them too to keep the same box
 local SHAPING_CONSTRAINTS = { "UIAspectRatioConstraint", "UISizeConstraint" }
 
@@ -90,6 +96,48 @@ function ButtonController.Animate(button: GuiButton, scaledWith: { GuiObject }?)
 	button.Destroying:Connect(function()
 		released:Disconnect()
 	end)
+end
+
+-- A white copy of the button's shape grows out over it and fades, its fill first and then
+-- its outline, so it looks like two rings. For a button that's had Animate, which puts it in a holder
+-- with its own box to grow from
+function ButtonController.Pulse(button: GuiButton)
+	local holder = button.Parent
+	if not (holder and holder:IsA("GuiObject")) then
+		return
+	end
+
+	local pulse = Instance.new("Frame")
+	pulse.Name = "Pulse"
+	pulse.AnchorPoint = Vector2.new(0.5, 0.5)
+	pulse.Position = UDim2.fromScale(0.5, 0.5)
+	pulse.Size = UDim2.fromScale(1, 1)
+	pulse.BackgroundColor3 = Color3.new(1, 1, 1)
+	pulse.BackgroundTransparency = PULSE_FILL_TRANSPARENCY
+	pulse.BorderSizePixel = 0
+	pulse.ZIndex = button.ZIndex + 1
+
+	-- Same corners and outline thickness as the button, without its gradient
+	local corner = button:FindFirstChildOfClass("UICorner")
+	if corner then
+		corner:Clone().Parent = pulse
+	end
+	local buttonStroke = button:FindFirstChildOfClass("UIStroke")
+	local stroke = if buttonStroke then buttonStroke:Clone() else Instance.new("UIStroke")
+	stroke:ClearAllChildren()
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Transparency = 0
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = pulse
+	pulse.Parent = holder
+
+	TweenService:Create(pulse, PULSE_GROW_INFO, { Size = UDim2.fromScale(PULSE_SCALE, PULSE_SCALE) }):Play()
+	TweenService:Create(pulse, PULSE_FILL_INFO, { BackgroundTransparency = 1 }):Play()
+	local fade = TweenService:Create(stroke, PULSE_STROKE_INFO, { Transparency = 1 })
+	fade.Completed:Connect(function()
+		pulse:Destroy()
+	end)
+	fade:Play()
 end
 
 -- For buttons already at their full size, which can't grow on hover: they only press down while

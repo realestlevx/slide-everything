@@ -149,6 +149,7 @@ local slidingLevel = 0 -- Share of that it's at now
 local nextShakeAt = 0
 local random = Random.new()
 local dropView = false
+local menuOpen = false -- A menu that takes over the screen, like Settings, is open
 local outsideBase = false
 local floorsUnlocked = false -- Whether the player's base has a floor above its first
 local floorHolders: { GuiObject } = {} -- The holders the top bar's Next and Back buttons moved into
@@ -183,6 +184,9 @@ local HudController = {
 
 local function isShown(name: string): boolean
 	if name == "Multiplier" and multiplier <= 1 then
+		return false
+	end
+	if name == "Inventory" and menuOpen then
 		return false
 	end
 	if not dropView and (name == "BaseButtons" or name == "OutsideBaseButtons") then
@@ -395,6 +399,16 @@ function HudController.SetDropView(on: boolean)
 	refreshTop()
 	setSteering(on)
 	dropViewChanged:Fire(on)
+end
+
+-- Whether a menu that takes over the screen, like Settings, is open. The hotbar slides down out of
+-- its way while one is, and back up once it's closed, unless the drop view still keeps it out
+function HudController.SetMenuOpen(open: boolean)
+	if open == menuOpen then
+		return
+	end
+	menuOpen = open
+	move("Inventory", isShown("Inventory"))
 end
 
 -- Whether the player has left their base, which swaps the top bar's buttons for the one back to it

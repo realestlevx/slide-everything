@@ -34,6 +34,7 @@ local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirecti
 local SIGNS_FOLDER_NAME = "Signs"
 
 type Panel = {
+	Button: GuiButton?,
 	Price: TextLabel?,
 	Value: TextLabel?,
 }
@@ -188,6 +189,7 @@ local function copySign(place: Folder, original: SurfaceGui)
 		local button = frame:FindFirstChildWhichIsA("GuiButton")
 		local value = frame:FindFirstChild(VALUE_LABEL_NAME)
 		sign.Panels[name] = {
+			Button = button,
 			Price = button and button:FindFirstChildOfClass("TextLabel"),
 			Value = if value and value:IsA("TextLabel") then value else nil,
 		}
@@ -243,11 +245,17 @@ local function playSound(name: string) -- Sound under SoundService.SFX
 	end
 end
 
--- Bought: the buy sound. Too expensive: the error sound, and the panel's price on the player's own
--- signs flashes red and fades back to its own color
+-- Bought: the buy sound, and the panel's button on the player's own signs pulses. Too expensive: the
+-- error sound, and the panel's price on the player's own signs flashes red and fades back to its own color
 local function onResult(name: string, bought: boolean)
 	if bought then
 		playSound("Buy")
+		for _, sign in signs do
+			local panel = sign.Panels[name]
+			if panel and panel.Button and isOwner(sign.Place) then
+				ButtonController.Pulse(panel.Button)
+			end
+		end
 		return
 	end
 

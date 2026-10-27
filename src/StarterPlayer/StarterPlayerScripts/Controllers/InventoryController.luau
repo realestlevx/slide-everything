@@ -44,7 +44,7 @@ local EMPTY_TRANSPARENCY = 0.6
 
 -- The topbar button opens and closes the backpack, and so does the key Roblox's own backpack uses
 local TOGGLE_KEY = Enum.KeyCode.Backquote
-local ICON_LABEL = "Inventory"
+local ICON_CAPTION = "Inventory" -- Shown on hover, so the button itself is only its icon
 local ICON_IMAGE = "rbxasset://textures/ui/TopBar/inventoryOff.png"
 local ICON_OPEN_IMAGE = "rbxasset://textures/ui/TopBar/inventoryOn.png"
 -- The backpack grows from this share of its size as it opens, overshooting a little, and shrinks
@@ -747,7 +747,8 @@ end
 local function createIcon()
 	local icon = Icon.new()
 		:setName("Inventory")
-		:setLabel(ICON_LABEL)
+		:setRight()
+		:setCaption(ICON_CAPTION)
 		:setImage(ICON_IMAGE, "Deselected")
 		:setImage(ICON_OPEN_IMAGE, "Selected")
 		:bindToggleKey(TOGGLE_KEY)

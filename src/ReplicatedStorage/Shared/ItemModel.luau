@@ -30,6 +30,7 @@ type Record = {
 	ScaleValue: NumberValue?,
 	FocusTween: Tween?,
 	FocusValue: NumberValue?,
+	Arrivals: RBXScriptConnection?, -- Takes on whatever arrives in the item later (see addLate)
 }
 
 local records: { [BasePart]: Record } = setmetatable({}, { __mode = "k" }) :: any
@@ -41,6 +42,47 @@ local function isEffect(instance: Instance): boolean
 		end
 	end
 	return false
+end
+
+local function applyScale(root: BasePart, record: Record)
+	local scale = record.Scale * record.Focus
+	root.Size = record.Size * scale
+	for _, inner in record.Inner do
+		inner.Part.Size = inner.Size * scale
+		inner.Weld.C0 = inner.Offset.Rotation + inner.Offset.Position * scale
+	end
+	for attachment, position in record.Attachments do
+		attachment.Position = position * scale
+	end
+end
+
+-- With streaming, the parts inside an item the server made can arrive after the item itself, still
+-- at full size, and ones that stream out come back as the server has them. Either way they're taken
+-- on at the size and fade the rest of the item is at
+local function addLate(root: BasePart, record: Record, descendant: Instance)
+	if descendant:IsA("Weld") and descendant.Part0 == root and descendant.Part1 then
+		local known = false
+		for _, inner in record.Inner do
+			known = known or inner.Weld == descendant
+		end
+		if not known then
+			local part = descendant.Part1
+			table.insert(record.Inner, { Part = part, Size = part.Size, Offset = descendant.C0, Weld = descendant })
+		end
+		applyScale(root, record)
+	elseif descendant:IsA("Attachment") then
+		if not record.Attachments[descendant] then
+			record.Attachments[descendant] = descendant.Position
+		end
+		applyScale(root, record)
+	elseif descendant:IsA("BasePart") then
+		descendant.LocalTransparencyModifier = root.LocalTransparencyModifier
+	elseif isEffect(descendant) then
+		if record.Effects[descendant] == nil then
+			record.Effects[descendant] = (descendant :: any).Enabled
+		end
+		(descendant :: any).Enabled = record.Effects[descendant] and record.Transparency < 1
+	end
 end
 
 -- Taken from the item as it is now, which counts as full size. Copies of items are recorded as
@@ -62,6 +104,7 @@ local function getRecord(root: BasePart): Record
 		ScaleValue = nil,
 		FocusTween = nil,
 		FocusValue = nil,
+		Arrivals = nil,
 	}
 	for _, descendant in root:GetDescendants() do
 		if descendant:IsA("Weld") and descendant.Part0 == root and descendant.Part1 then
@@ -73,6 +116,9 @@ local function getRecord(root: BasePart): Record
 			record.Effects[descendant] = (descendant :: any).Enabled
 		end
 	end
+	record.Arrivals = root.DescendantAdded:Connect(function(descendant)
+		addLate(root, record, descendant)
+	end)
 	records[root] = record
 	return record
 end
@@ -80,6 +126,11 @@ end
 -- Welds the parts inside a fresh copy of an item to its outer part where they sit, and records it.
 -- Call it before moving the copy
 function ItemModel.Prepare(root: BasePart)
+	-- A record from before would take the new welds on as late arrivals
+	local old = records[root]
+	if old and old.Arrivals then
+		old.Arrivals:Disconnect()
+	end
 	for _, descendant in root:GetDescendants() do
 		if descendant:IsA("WeldConstraint") or descendant:IsA("JointInstance") then
 			descendant:Destroy()
@@ -140,18 +191,6 @@ end
 function ItemModel.GetHeight(rotation: CFrame, size: Vector3): number
 	local up = rotation:VectorToObjectSpace(Vector3.yAxis)
 	return math.abs(up.X) * size.X + math.abs(up.Y) * size.Y + math.abs(up.Z) * size.Z
-end
-
-local function applyScale(root: BasePart, record: Record)
-	local scale = record.Scale * record.Focus
-	root.Size = record.Size * scale
-	for _, inner in record.Inner do
-		inner.Part.Size = inner.Size * scale
-		inner.Weld.C0 = inner.Offset.Rotation + inner.Offset.Position * scale
-	end
-	for attachment, position in record.Attachments do
-		attachment.Position = position * scale
-	end
 end
 
 -- Grows or shrinks the whole item around its outer part's middle. Stops any scaling tween
