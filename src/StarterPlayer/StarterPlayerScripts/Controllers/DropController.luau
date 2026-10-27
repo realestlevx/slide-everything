@@ -83,6 +83,9 @@ local BARRIER_GAP = 1
 local MAX_BARRIER_ANGLE = math.rad(60)
 -- Items stay the way up they were dropped instead of tumbling, tilted to lie along the ground under them
 local TILT_RESPONSIVENESS = 25
+-- Studs an item starts clear of the edge round each floor's opening that it falls through (see
+-- fitThroughOpenings)
+local EDGE_GAP = 0.5
 -- Studs below an item at its own size that the ground it lies along is looked for. An upgraded item
 -- looks as much further as it's bigger, since its middle is that much higher
 local GROUND_PROBE = 8
@@ -344,10 +347,43 @@ local function finishItem(current: Drop, dropped: DroppedItem)
 	task.delay(ITEM_FADE_INFO.Time, dropped.Part.Destroy, dropped.Part)
 end
 
+-- Studs either way along the axis that a box this size, turned like this, reaches from its middle
+local function getReach(cframe: CFrame, size: Vector3, axis: Vector3): number
+	local half = size / 2
+	return math.abs(cframe.RightVector:Dot(axis)) * half.X
+		+ math.abs(cframe.UpVector:Dot(axis)) * half.Y
+		+ math.abs(cframe.LookVector:Dot(axis)) * half.Z
+end
+
+-- Items turn as they float in their slots, so a long one dropped while it points at the side of the
+-- opening starts out over the edge round it, and lands on it. Its middle is over the hole, but it's
+-- held the way up it was dropped, so it can't tip in, and it sits there until it's taken for one
+-- that's come to rest. So it starts just far enough in to clear the edge of every opening below it.
+-- An item wider than an opening starts in the middle of it
+local function fitThroughOpenings(current: Drop, cframe: CFrame, size: Vector3): CFrame
+	local position = cframe.Position
+	for opening in current.Openings do
+		if opening.Position.Y > position.Y then
+			continue
+		end
+		-- Across it both ways, along its own sides
+		for _, axis in { Vector3.xAxis, Vector3.zAxis } do
+			local across = opening.CFrame:VectorToWorldSpace(axis)
+			local room = math.max(opening.Size:Dot(axis) / 2 - getReach(cframe, size, across) - EDGE_GAP, 0)
+			local offset = (position - opening.Position):Dot(across)
+			position += across * (math.clamp(offset, -room, room) - offset)
+		end
+	end
+	return cframe.Rotation + position
+end
+
 -- A physical copy of the item where its display floats in the slot, as big as it shows there at its
--- level. Made on this client only, so the server doesn't simulate anyone's drop
+-- level, moved in to fall clear of the openings' edges. Made on this client only, so the server
+-- doesn't simulate anyone's drop
 local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey: string, cframe: CFrame)
 	local size = Upgrades.GetSize(level)
+	local _, fullSize = PhysicalItem.GetShape(item)
+	cframe = fitThroughOpenings(current, cframe, fullSize * size)
 	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS, size)
 	local attachment = Instance.new("Attachment")
 	attachment.Parent = copy

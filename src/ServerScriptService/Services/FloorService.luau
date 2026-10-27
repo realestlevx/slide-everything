@@ -93,6 +93,11 @@ function FloorService.Start()
 	-- A place without a floor's part builds it in the same spot as a place that has one, like floor
 	-- 3, only marked in Place1
 	for number in Floors.Prices do
+		local template = ServerStorage:FindFirstChild(Floors.GetName(number))
+		if template and not template:FindFirstChild(Floors.GetSpawnName(number)) then
+			warn(`{template.Name} needs a {Floors.GetSpawnName(number)} part for Next and Back to go to floor {number}`)
+		end
+
 		local from: Folder? = nil
 		for _, place in places do
 			if spots[place][number] then

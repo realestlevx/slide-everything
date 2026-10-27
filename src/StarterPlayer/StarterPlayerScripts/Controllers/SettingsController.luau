@@ -6,17 +6,19 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Icon = require(ReplicatedStorage.Packages.TopbarPlus)
+local Volumes = require(ReplicatedStorage.Shared.Volumes)
 
 local ButtonController = require(script.Parent.ButtonController)
 local HudController = require(script.Parent.HudController)
 
-local SetSfxVolume = ReplicatedStorage.Remotes.SetSfxVolume
+local SetVolume = ReplicatedStorage.Remotes.SetVolume
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- The topbar button opens and closes the Settings gui, and its exit button closes it too. It stays
 -- through drops, when the rest of the HUD has moved out
 local ICON_IMAGE = "rbxassetid://18801194936"
+local ICON_IMAGE_SCALE = 0.75 -- Of the button, up from TopbarPlus's 0.5
 local ICON_CAPTION = "Settings"
 local ICON_ORDER = 2 -- After the Inventory button, which keeps TopbarPlus's own order of a little over 1
 -- The menu grows from this share of its size as it opens, overshooting a little, and shrinks back
@@ -31,6 +33,27 @@ local EFFECTS_IN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDi
 local EFFECTS_OUT_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FOV_STEP_NAME = "SettingsFov"
 
+-- Volume name (see Volumes) -> its row in the Settings gui's Holder, which has its slider
+local ROWS = {
+	Sfx = "Sound",
+	Music = "Music",
+}
+
+type Slider = {
+	Name: string, -- See Volumes
+	Group: SoundGroup?,
+	-- The group's Volume as set in Studio. The slider sets it as a share of this, so all the way up
+	-- it sounds as it was mixed
+	MixedVolume: number,
+	Volume: number, -- Where the slider is, 0 to 1
+	-- Set once the player moves it, so their saved volume reaching the client late can't move it back
+	Changed: boolean,
+	-- Parts of its row, found again each time the gui's remade
+	Track: GuiObject?, -- The row's Scroller, which the slider runs along
+	Fill: GuiObject?,
+	Knob: GuiObject?,
+}
+
 local SettingsController = {}
 
 local icon: any = nil
@@ -40,9 +63,6 @@ local openVersion = 0 -- Counts opens and closes, so a close that's been reopene
 -- Parts of the Settings gui, which is remade on every respawn, so they're found again each time
 local main: GuiObject? = nil
 local openScale: UIScale? = nil
-local track: GuiObject? = nil -- The Sound row's Scroller, which the slider runs along
-local fill: GuiObject? = nil
-local knob: GuiObject? = nil
 
 local blur: BlurEffect? = nil
 local fovBoost = Instance.new("NumberValue") -- How far the view's widened right now, tweened in and out
@@ -51,14 +71,9 @@ local widenedCamera: Camera? = nil
 local unwidenedFov = 0
 local widenedFov = 0
 
--- SoundService.SFX, the SoundGroup every sound effect plays through. The slider sets its Volume as a
--- share of what it's set to in Studio, so all the way up the effects sound as they were mixed
-local sfx: SoundGroup? = nil
-local mixedVolume = 1
-local sfxVolume = 1 -- Where the slider is, 0 to 1
--- Set once the player moves the slider, so their saved volume reaching the client late can't move it back
-local changed = false
-local press: InputObject? = nil -- The click or touch dragging the slider
+local sliders: { [string]: Slider } = {}
+local press: InputObject? = nil -- The click or touch dragging a slider
+local pressed: Slider? = nil -- The slider it's dragging
 
 local function isPress(input: InputObject): boolean
 	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
@@ -69,46 +84,48 @@ local function isSameInput(a: InputObject, b: InputObject): boolean
 	return a == b or (a.UserInputType == b.UserInputType and a.UserInputType ~= Enum.UserInputType.Touch)
 end
 
-local function render()
+local function render(slider: Slider)
+	local fill, knob = slider.Fill, slider.Knob
 	if fill then
-		fill.Size = UDim2.new(UDim.new(sfxVolume, 0), fill.Size.Y)
+		fill.Size = UDim2.new(UDim.new(slider.Volume, 0), fill.Size.Y)
 		-- Its outline would still show as a sliver at nothing
-		fill.Visible = sfxVolume > 0
+		fill.Visible = slider.Volume > 0
 	end
 	if knob then
-		knob.Position = UDim2.new(UDim.new(sfxVolume, 0), knob.Position.Y)
+		knob.Position = UDim2.new(UDim.new(slider.Volume, 0), knob.Position.Y)
 	end
 end
 
-local function setVolume(volume: number)
-	sfxVolume = volume
-	if sfx then
-		sfx.Volume = mixedVolume * volume
+local function setVolume(slider: Slider, volume: number)
+	slider.Volume = volume
+	if slider.Group then
+		slider.Group.Volume = slider.MixedVolume * volume
 	end
-	render()
+	render(slider)
 end
 
-local function slideTo(x: number)
-	local bar = track
-	if not (bar and bar.AbsoluteSize.X > 0) then
+local function slideTo(slider: Slider, x: number)
+	local track = slider.Track
+	if not (track and track.AbsoluteSize.X > 0) then
 		return
 	end
-	changed = true
-	setVolume(math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1))
+	slider.Changed = true
+	setVolume(slider, math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1))
 end
 
--- Pressing anywhere on the bar or its knob jumps the slider there and starts dragging it
-local function onPressed(input: InputObject)
+-- Pressing anywhere on a bar or its knob jumps the slider there and starts dragging it
+local function onPressed(slider: Slider, input: InputObject)
 	if press or not isPress(input) then
 		return
 	end
 	press = input
-	slideTo(input.Position.X)
+	pressed = slider
+	slideTo(slider, input.Position.X)
 end
 
 local function onPointerMoved(input: InputObject)
-	local current = press
-	if not current then
+	local current, slider = press, pressed
+	if not (current and slider) then
 		return
 	end
 	local isMouse = current.UserInputType == Enum.UserInputType.MouseButton1
@@ -117,23 +134,24 @@ local function onPointerMoved(input: InputObject)
 	elseif not isMouse and input ~= current then
 		return
 	end
-	slideTo(input.Position.X)
+	slideTo(slider, input.Position.X)
 end
 
 -- Kept once it's let go, rather than on every step of the drag
 local function onPointerReleased(input: InputObject)
-	local current = press
-	if not (current and isSameInput(current, input)) then
+	local current, slider = press, pressed
+	if not (current and slider and isSameInput(current, input)) then
 		return
 	end
 	press = nil
-	SetSfxVolume:FireServer(sfxVolume)
+	pressed = nil
+	SetVolume:FireServer(slider.Name, slider.Volume)
 end
 
-local function loadSavedVolume()
-	local saved = LocalPlayer:GetAttribute("SfxVolume")
-	if typeof(saved) == "number" and not changed then
-		setVolume(saved)
+local function loadSavedVolume(slider: Slider)
+	local saved = LocalPlayer:GetAttribute(`{slider.Name}Volume`)
+	if typeof(saved) == "number" and not slider.Changed then
+		setVolume(slider, saved)
 	end
 end
 
@@ -207,18 +225,32 @@ local function setOpen(open: boolean)
 	end
 end
 
+local function bindSlider(slider: Slider, row: Instance)
+	local track = row:WaitForChild("Scroller") :: GuiObject
+	local knob = track:WaitForChild("Slider") :: GuiObject
+	slider.Track = track
+	slider.Fill = track:WaitForChild("Fill") :: GuiObject
+	slider.Knob = knob
+
+	-- The knob sits centered on the end of the fill
+	knob.AnchorPoint = Vector2.new(0.5, knob.AnchorPoint.Y)
+	-- So a touch dragging the slider doesn't turn the camera as well
+	track.Active = true
+	knob.Active = true
+	for _, gui in { track, knob } do
+		gui.InputBegan:Connect(function(input)
+			onPressed(slider, input)
+		end)
+	end
+	render(slider)
+end
+
 local function bindGui(gui: Instance)
 	local frame = gui:WaitForChild("Main") :: GuiObject
 	local exitButton = frame:WaitForChild("Header"):WaitForChild("ExitButton") :: GuiButton
-	local scroller = frame:WaitForChild("Holder"):WaitForChild("Sound"):WaitForChild("Scroller") :: GuiObject
-	local bar = scroller:WaitForChild("Fill") :: GuiObject
-	local handle = scroller:WaitForChild("Slider") :: GuiObject
+	local holder = frame:WaitForChild("Holder")
 
 	main = frame
-	track = scroller
-	fill = bar
-	knob = handle
-
 	local scale = Instance.new("UIScale")
 	scale.Name = "OpenScale"
 	scale.Scale = if isOpen then 1 else OPEN_SCALE
@@ -226,14 +258,9 @@ local function bindGui(gui: Instance)
 	openScale = scale
 	frame.Visible = isOpen
 
-	-- The knob sits centered on the end of the fill
-	handle.AnchorPoint = Vector2.new(0.5, handle.AnchorPoint.Y)
-	-- So a touch dragging the slider doesn't turn the camera as well
-	scroller.Active = true
-	handle.Active = true
-	scroller.InputBegan:Connect(onPressed)
-	handle.InputBegan:Connect(onPressed)
-	render()
+	for name, slider in sliders do
+		task.spawn(bindSlider, slider, holder:WaitForChild(ROWS[name]))
+	end
 
 	ButtonController.Animate(exitButton)
 	exitButton.Activated:Connect(function()
@@ -244,15 +271,16 @@ local function bindGui(gui: Instance)
 end
 
 -- A sound plays through the group its SoundGroup names rather than the one it's kept in, so every
--- sound in SFX, and every copy of one played there, is pointed at it
-local function bindSoundGroup()
-	local group = SoundService:FindFirstChild("SFX")
+-- sound in the group, and every copy of one played there, is pointed at it
+local function bindGroup(slider: Slider)
+	local groupName = Volumes[slider.Name]
+	local group = SoundService:FindFirstChild(groupName)
 	if not (group and group:IsA("SoundGroup")) then
-		warn("[SettingsController] SoundService.SFX should be a SoundGroup")
+		warn(`[SettingsController] SoundService.{groupName} should be a SoundGroup`)
 		return
 	end
-	sfx = group
-	mixedVolume = group.Volume
+	slider.Group = group
+	slider.MixedVolume = group.Volume
 
 	local function link(descendant: Instance)
 		if descendant:IsA("Sound") then
@@ -283,6 +311,7 @@ local function createIcon()
 		:setName("Settings")
 		:setRight()
 		:setImage(ICON_IMAGE)
+		:setImageScale(ICON_IMAGE_SCALE)
 		:setCaption(ICON_CAPTION)
 		:setOrder(ICON_ORDER)
 		:bindEvent("toggled", function(_, isSelected: boolean)
@@ -291,9 +320,24 @@ local function createIcon()
 end
 
 function SettingsController.Start()
-	bindSoundGroup()
-	LocalPlayer:GetAttributeChangedSignal("SfxVolume"):Connect(loadSavedVolume)
-	loadSavedVolume()
+	for name in Volumes do
+		local slider: Slider = {
+			Name = name,
+			Group = nil,
+			MixedVolume = 1,
+			Volume = 1,
+			Changed = false,
+			Track = nil,
+			Fill = nil,
+			Knob = nil,
+		}
+		sliders[name] = slider
+		bindGroup(slider)
+		LocalPlayer:GetAttributeChangedSignal(`{name}Volume`):Connect(function()
+			loadSavedVolume(slider)
+		end)
+		loadSavedVolume(slider)
+	end
 
 	createBlur()
 	-- After every other camera step, the drop camera's too, and taken off once the frame's drawn
@@ -312,7 +356,7 @@ function SettingsController.Start()
 	createIcon()
 
 	UserInputService.InputChanged:Connect(onPointerMoved)
-	-- Listened for everywhere, since the slider can be let go off the bar
+	-- Listened for everywhere, since a slider can be let go off its bar
 	UserInputService.InputEnded:Connect(onPointerReleased)
 end
 

@@ -47,6 +47,7 @@ local TOGGLE_KEY = Enum.KeyCode.Backquote
 local ICON_CAPTION = "Inventory" -- Shown on hover, so the button itself is only its icon
 local ICON_IMAGE = "rbxasset://textures/ui/TopBar/inventoryOff.png"
 local ICON_OPEN_IMAGE = "rbxasset://textures/ui/TopBar/inventoryOn.png"
+local ICON_IMAGE_SCALE = 0.75 -- Of the button, up from TopbarPlus's 0.5
 -- The backpack grows from this share of its size as it opens, overshooting a little, and shrinks
 -- back to it as it closes
 local OPEN_SCALE = 0.85
@@ -751,6 +752,7 @@ local function createIcon()
 		:setCaption(ICON_CAPTION)
 		:setImage(ICON_IMAGE, "Deselected")
 		:setImage(ICON_OPEN_IMAGE, "Selected")
+		:setImageScale(ICON_IMAGE_SCALE)
 		:bindToggleKey(TOGGLE_KEY)
 		:bindEvent("toggled", function(_, isSelected: boolean)
 			setOpen(isSelected)

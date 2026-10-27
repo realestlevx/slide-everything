@@ -42,10 +42,13 @@ local GAME_PASS_ATTRIBUTE = "GamePass"
 local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash" }
 local PLACE_COUNT_ATTRIBUTE = "PlaceCount" -- On a slot: how many times an item was put in it by hand
 local EQUIP_BEST_COOLDOWN = 0.5 -- Seconds between Equip Best presses that count, so spamming it does nothing
+local PASS_CHECK_ATTEMPTS = 3 -- Tries at asking Roblox whether a joining player has the paid slots pass
+local PASS_CHECK_RETRY_DELAY = 2 -- Seconds between those tries
 
 local rarityPartColors: { [BasePart]: Color3 } = {} -- Each Rarity part's own color, for empty slots
 local partTransparencies: { [BasePart]: number } = {} -- Each slot part's own transparency, for once it's bought
-local passOwners: { [Player]: boolean } = {} -- Players who own the paid slots pass
+-- Whether each player owns the paid slots pass, once that's known: it's checked as they join
+local passOwners: { [Player]: boolean } = {}
 local lastEquipBestTimes: { [Player]: number } = {}
 
 local SlotService = {}
@@ -297,7 +300,8 @@ local function getOwner(place: Folder): Player?
 end
 
 -- A slot renumbered, removed or given a price in Studio would keep its item hidden for good, so that
--- item goes back to the hotbar instead
+-- item goes back to the hotbar instead. Pass slots keep what's saved in them until the pass check is
+-- back, as their data often loads first
 local function dropMissingSlots(player: Player, place: Folder)
 	local data = PlayerDataService.Get(player)
 	if not data then
@@ -306,7 +310,8 @@ local function dropMissingSlots(player: Player, place: Folder)
 
 	local keys = {}
 	for _, slot in Places.GetSlots(place) do
-		if isUnlocked(player, data, slot) then
+		local passUnknown = isPassSlot(slot) and isOnBuiltFloor(data, slot) and passOwners[player] == nil
+		if passUnknown or isUnlocked(player, data, slot) then
 			keys[Places.GetSlotKey(slot)] = true
 		end
 	end
@@ -397,9 +402,15 @@ local function onEquipBest(player: Player)
 	lastEquipBestTimes[player] = now
 
 	local slots: { Model } = {}
+	-- Items in slots it can't fill, like pass slots while the pass is still being checked, stay where
+	-- they are, and aren't put in a second slot
+	local held: { [string]: boolean } = {}
 	for _, slot in Places.GetSlots(place) do
+		local uid = data.Slots[Places.GetSlotKey(slot)]
 		if isUnlocked(player, data, slot) then
 			table.insert(slots, slot)
+		elseif uid then
+			held[uid] = true
 		end
 	end
 
@@ -412,7 +423,7 @@ local function onEquipBest(player: Player)
 	local ranked = {}
 	for index, owned in data.Inventory do
 		local item = Items[owned.Id]
-		if item then
+		if item and not held[owned.Uid] then
 			local earns = Upgrades.GetMoneyPerSecond(item, Upgrades.GetLevel(owned))
 			table.insert(ranked, { Owned = owned, Earns = earns, Placed = placed[owned.Uid] == true, Index = index })
 		end
@@ -590,14 +601,35 @@ local function givePass(player: Player)
 	end
 end
 
--- Checked once as the player joins, and their pass slots open up if they have it
+-- Checked once as the player joins. Once it's known, their place is refreshed: their pass slots open
+-- up if they have it, and otherwise give back what's in them. If Roblox can't be asked, it stays
+-- unknown, and the pass slots hold on to their items without opening
 local function checkPass(player: Player)
-	if GamePasses.PaidSlots <= 0 then
+	local owns = false
+	if GamePasses.PaidSlots > 0 then
+		local ok, result
+		for attempt = 1, PASS_CHECK_ATTEMPTS do
+			ok, result = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, GamePasses.PaidSlots)
+			if ok or attempt == PASS_CHECK_ATTEMPTS or player.Parent ~= Players then
+				break
+			end
+			task.wait(PASS_CHECK_RETRY_DELAY)
+		end
+		if not ok then
+			warn(`Couldn't check whether {player.Name} has the paid slots pass: {result}`)
+			return
+		end
+		owns = result == true
+	end
+	if player.Parent ~= Players then
 		return
 	end
-	local ok, owns = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, GamePasses.PaidSlots)
-	if ok and owns and player.Parent == Players then
-		givePass(player)
+
+	-- They may have bought it while it was being checked
+	passOwners[player] = passOwners[player] or owns
+	local place = PlaceService.GetPlace(player)
+	if place then
+		refreshPlace(place)
 	end
 end
 
