@@ -8,6 +8,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local Rainbow = require(ReplicatedStorage.Shared.Rainbow)
 
 local ButtonController = require(script.Parent.ButtonController)
 
@@ -24,7 +25,9 @@ local EDGE_MARGIN = 0.1 -- Pieces slide this share of their own size past the ed
 local DROP_VIEW_PIECES =
 	{ Spectate = true, ControlFrame = true, Left = true, Right = true, Time = true, Multiplier = true }
 -- The sequences play side by side, each step once the one before has finished: in this order into
--- the drop view, and backwards out of it. A step's pieces move together
+-- the drop view, and backwards out of it. A menu like Settings plays them backwards too as it opens,
+-- pushing the drop view's pieces out of its way, and in order as it closes. A step's pieces move
+-- together
 local SEQUENCES = {
 	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right", "Time", "Multiplier" } },
 	{ { "Cash", "Gem" } },
@@ -54,11 +57,7 @@ local TICK_POP_FADE_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.Easing
 local SLIDING_SOUNDS_NAME = "Sliding"
 local CLOCK_SOUND_NAMES = { "Clock1", "Clock2" }
 
--- The multiplier's colors scroll through the rainbow. The gradient's colors are made again every
--- frame, each a little further round, instead of sliding its Offset, which leaves a flat color
--- where it's slid off the end
-local RAINBOW_COLORS = 12 -- Keypoints across it; a ColorSequence takes up to 20
-local RAINBOW_PERIOD = 2 -- Seconds for a color to scroll all the way across
+-- The multiplier's colors scroll through the rainbow (see Rainbow)
 -- It shakes harder and grows bigger for every wall the items have passed that multiplies, up to
 -- MAX_SHAKE_WALLS of them. The shake starts as a slight tremble at the first wall and builds up
 -- faster with each one after: walls ^ SHAKE_BUILD times as hard
@@ -96,6 +95,8 @@ local VIGNETTE_OUT_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingD
 local SPEED_LINES_RATE = 1.5
 local SPEED_LINES_MAX_RATE = 3
 local SPEED_LINES_GROW = 0.2 -- Share bigger
+-- They fade out while a menu like Settings is open, and back in once it's closed
+local SPEED_LINES_MENU_SHARPNESS = 10
 -- SFX.Sliding.Sliding loops while they slide, getting louder as they get going, to as loud as set in
 -- Studio at the slide speed before any upgrade, and fading out once they stop
 local SLIDING_SOUND_NAME = "Sliding"
@@ -142,6 +143,7 @@ local vignetteTransparency = 0 -- As laid out in Studio, which it fades in to
 local speedLines: { { Image: ImageLabel, Scale: UIScale } } = {} -- The copies that take turns
 local speedLinesTransparency = 0 -- As laid out in Studio, which they fade in to
 local speedLinesRound = 0 -- How far round the first copy is, from 0 to 1
+local speedLinesLevel = 1 -- Share of their strength they're at, which a menu fades out
 local dropSpeed = 0 -- How fast the drop's items slide, in slide speeds before any upgrade
 local clockTicks = 0 -- Times the timer's ticked down since the drop view came in
 local slidingSound: Sound? = nil -- A looping copy of SFX.Sliding.Sliding
@@ -187,7 +189,7 @@ local function isShown(name: string): boolean
 	if name == "Multiplier" and multiplier <= 1 then
 		return false
 	end
-	if menuOpen and (name == "Inventory" or table.find(TOP_PIECES, name)) then
+	if menuOpen and (name == "Inventory" or DROP_VIEW_PIECES[name] or table.find(TOP_PIECES, name)) then
 		return false
 	end
 	if not dropView and (name == "BaseButtons" or name == "OutsideBaseButtons") then
@@ -271,12 +273,12 @@ local function move(name: string, shown: boolean): number
 	return info.Time
 end
 
-local function playSequence(sequence: { { string } }, switch: number)
+local function playSequence(sequence: { { string } }, switch: number, forwards: boolean)
 	for i = 1, #sequence do
 		if switches ~= switch then
 			return
 		end
-		local step = sequence[if dropView then i else #sequence + 1 - i]
+		local step = sequence[if forwards then i else #sequence + 1 - i]
 		local duration = 0
 		for _, name in step do
 			duration = math.max(duration, move(name, isShown(name)))
@@ -284,6 +286,14 @@ local function playSequence(sequence: { { string } }, switch: number)
 		if duration > 0 then
 			task.wait(duration)
 		end
+	end
+end
+
+-- Moves every piece to where it belongs now, a step at a time (see SEQUENCES)
+local function switchPieces(forwards: boolean)
+	switches += 1
+	for _, sequence in SEQUENCES do
+		task.spawn(playSequence, sequence, switches, forwards)
 	end
 end
 
@@ -393,24 +403,22 @@ function HudController.SetDropView(on: boolean)
 	if on then
 		clockTicks = 0
 	end
-	switches += 1
-	for _, sequence in SEQUENCES do
-		task.spawn(playSequence, sequence, switches)
-	end
+	switchPieces(on)
 	refreshTop()
 	setSteering(on)
 	dropViewChanged:Fire(on)
 end
 
--- Whether a menu that takes over the screen, like Settings, is open. The hotbar slides down and the
--- top bar up out of its way while one is, and back once it's closed, unless the drop view still
--- keeps them out
+-- Whether a menu that takes over the screen, like Settings, is open. The hotbar, the top bar and the
+-- drop view's controls all move out of its way while one is, and the speed lines fade. Once it's
+-- closed, whichever belong in the view the player's in by then come back, since a drop can start or
+-- end while it's open
 function HudController.SetMenuOpen(open: boolean)
 	if open == menuOpen then
 		return
 	end
 	menuOpen = open
-	move("Inventory", isShown("Inventory"))
+	switchPieces(not open)
 	refreshTop()
 end
 
@@ -539,12 +547,15 @@ end
 
 -- Every frame the speed lines are on screen, each copy grows and fades a little further round
 local function animateSpeedLines(dt: number)
+	-- Even while they're not showing, so a drop that starts with a menu open doesn't flash them
+	local goal = if menuOpen then 0 else 1
+	speedLinesLevel += (goal - speedLinesLevel) * (1 - math.exp(-SPEED_LINES_MENU_SHARPNESS * dt))
 	if dropSpeed <= 0 then
 		return
 	end
 	local rate = math.clamp(SPEED_LINES_RATE * dropSpeed, SPEED_LINES_RATE, SPEED_LINES_MAX_RATE)
 	speedLinesRound = (speedLinesRound + rate * dt) % 1
-	local strength = (1 - speedLinesTransparency) * math.min(dropSpeed, 1)
+	local strength = (1 - speedLinesTransparency) * math.min(dropSpeed, 1) * speedLinesLevel
 	for index, layer in speedLines do
 		local round = (speedLinesRound + (index - 1) / #speedLines) % 1
 		layer.Scale.Scale = 1 + round * SPEED_LINES_GROW
@@ -681,17 +692,6 @@ function HudController.SetDropMultiplier(value: number, walls: number)
 	move("Multiplier", isShown("Multiplier"))
 end
 
-local function getRainbow(time: number): ColorSequence
-	local keypoints = {}
-	for index = 0, RAINBOW_COLORS - 1 do
-		local at = index / (RAINBOW_COLORS - 1)
-		-- Both ends are the same color, so it scrolls round without a seam
-		local hue = (at - time / RAINBOW_PERIOD) % 1
-		table.insert(keypoints, ColorSequenceKeypoint.new(at, Color3.fromHSV(hue, 1, 1)))
-	end
-	return ColorSequence.new(keypoints)
-end
-
 -- Every frame the multiplier's on screen: its rainbow scrolls, and it jumps about and tips
 local function animateMultiplier()
 	local piece = pieces.Multiplier
@@ -701,7 +701,7 @@ local function animateMultiplier()
 	end
 	local now = os.clock()
 	if valueGradient then
-		valueGradient.Color = getRainbow(now)
+		valueGradient.Color = Rainbow(now)
 	end
 	if now >= nextShakeAt then
 		nextShakeAt = now + 1 / SHAKE_RATE

@@ -76,13 +76,17 @@ local CATCH_UP_EASE = 2 -- How quickly an item takes up a faster speed; higher i
 -- held up for a long while, is too far gone to catch up, so it finishes where it is. It keeps what it
 -- made up to there and makes nothing more
 local LEFT_BEHIND = 4
--- Studs past an item's own size that a barrier counts as against it, so it's turned along it before
--- it hits and loses speed. One more across the slide than MAX_BARRIER_ANGLE would need too much speed
--- along it to keep up the pace down the slide, so it stops items like any other wall
+-- Barriers push items off to the side instead of stopping them, so they keep their pace down the
+-- slide. Within BARRIER_RANGE studs of one, an item can only close in on it so fast, slower the nearer
+-- it gets: BARRIER_PUSH studs per second for every stud it's further from it than BARRIER_GAP. So it's
+-- turned along it before it gets there, and any closer it's pushed away. That grows with the slide
+-- speed like SIDE_GRIP, so it's turned over the same stretch of slide however fast it goes. One more
+-- across the slide than MAX_BARRIER_ANGLE would need too much speed along it to keep up the pace down
+-- the slide, so it stops items like any other wall
+local BARRIER_RANGE = 6 -- Studs between the item's side and the barrier
 local BARRIER_GAP = 1
+local BARRIER_PUSH = 4
 local MAX_BARRIER_ANGLE = math.rad(60)
--- Items stay the way up they were dropped instead of tumbling, tilted to lie along the ground under them
-local TILT_RESPONSIVENESS = 25
 -- Studs an item starts clear of the edge round each floor's opening that it falls through (see
 -- fitThroughOpenings)
 local EDGE_GAP = 0.5
@@ -185,8 +189,6 @@ type DroppedItem = {
 	Passed: number, -- Walls it's gone through that multiply
 	Part: BasePart, -- The item's mesh, which the rest of it is welded to
 	Parts: { BasePart },
-	Rotation: CFrame, -- The way up it was dropped, which it keeps
-	Align: AlignOrientation, -- Holds it that way up, tilted along the ground
 	StillFor: number, -- Seconds it has been at rest (see STOPPED_SPEED)
 	Probe: number, -- Studs below it that the ground is looked for (see GROUND_PROBE)
 	GroundY: number, -- Height of the last ground it was over, which FALL_LIMIT is measured from
@@ -264,8 +266,9 @@ local function flatten(vector: Vector3): Vector3
 	return Vector3.new(vector.X, 0, vector.Z)
 end
 
--- The way out, across the ground, from a barrier within reach studs of the item's middle, if any
-local function getBarrierNormal(current: Drop, position: Vector3, reach: number): Vector3?
+-- The way out, across the ground, from a barrier within reach studs of the item's middle, if any,
+-- and how far across the ground its middle is from it
+local function getBarrierNormal(current: Drop, position: Vector3, reach: number): (Vector3?, number)
 	for _, barrier in current.Barriers do
 		if not barrier.Parent then
 			continue
@@ -281,10 +284,10 @@ local function getBarrierNormal(current: Drop, position: Vector3, reach: number)
 		local across = flatten(away)
 		-- Off its sides, not on top of it
 		if away.Magnitude < reach and across.Magnitude > away.Magnitude / 2 then
-			return across.Unit
+			return across.Unit, across.Magnitude
 		end
 	end
-	return nil
+	return nil, 0
 end
 
 -- How far the item's got, and what that's earned it, counting each stud at the multiplier of the
@@ -361,10 +364,9 @@ local function getReach(cframe: CFrame, size: Vector3, axis: Vector3): number
 end
 
 -- Items turn as they float in their slots, so a long one dropped while it points at the side of the
--- opening starts out over the edge round it, and lands on it. Its middle is over the hole, but it's
--- held the way up it was dropped, so it can't tip in, and it sits there until it's taken for one
--- that's come to rest. So it starts just far enough in to clear the edge of every opening below it.
--- An item wider than an opening starts in the middle of it
+-- opening starts out over the edge round it, and lands on it, and tips in late and spinning instead
+-- of falling straight through. So it starts just far enough in to clear the edge of every opening
+-- below it. An item wider than an opening starts in the middle of it
 local function fitThroughOpenings(current: Drop, cframe: CFrame, size: Vector3): CFrame
 	local position = cframe.Position
 	for opening in current.Openings do
@@ -390,15 +392,6 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 	local _, fullSize = PhysicalItem.GetShape(item)
 	cframe = fitThroughOpenings(current, cframe, fullSize * size)
 	local copy, parts = PhysicalItem.Create(item, cframe, ITEM_PHYSICS, size)
-	local attachment = Instance.new("Attachment")
-	attachment.Parent = copy
-	local align = Instance.new("AlignOrientation")
-	align.Mode = Enum.OrientationAlignmentMode.OneAttachment
-	align.Attachment0 = attachment
-	align.CFrame = cframe.Rotation
-	align.MaxTorque = math.huge
-	align.Responsiveness = TILT_RESPONSIVENESS
-	align.Parent = copy
 
 	local dropped: DroppedItem = {
 		Item = item,
@@ -412,8 +405,6 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		Passed = 0,
 		Part = copy,
 		Parts = parts,
-		Rotation = cframe.Rotation,
-		Align = align,
 		StillFor = 0,
 		Probe = GROUND_PROBE * size,
 		GroundY = current.StartY,
@@ -661,22 +652,26 @@ local function followItems(current: Drop, dt: number)
 			sideways += (target - sideways) * grip
 		end
 		local flat = forward + right * sideways
-		-- Against a barrier, it slides along it instead of into it, keeping its pace down the slide
-		local away = getBarrierNormal(current, part.Position, part.Size.Magnitude / 2 + BARRIER_GAP)
+		-- Near a barrier, it's pushed off to the side, keeping its pace down the slide (see BARRIER_RANGE)
+		local away, distance = getBarrierNormal(current, part.Position, part.Size.Magnitude / 2 + BARRIER_RANGE)
 		local onward = forward:Dot(current.Direction)
-		if away and onward > 0 and flat:Dot(away) < 0 then
-			local along = current.Direction - away * current.Direction:Dot(away)
-			if along.Magnitude > math.cos(MAX_BARRIER_ANGLE) then
-				flat = along.Unit * onward / along.Magnitude
+		if away and onward > 0 then
+			local outward = right:Dot(away) -- Studs further off the barrier for every stud to the right
+			if math.abs(outward) > math.cos(MAX_BARRIER_ANGLE) then
+				local clearance = distance - getReach(part.CFrame, part.Size, away)
+				-- The least it has to be moving away from it, so below 0 while it may still close in
+				local leastAway = (BARRIER_GAP - clearance) * BARRIER_PUSH * sideScale
+				local awaySpeed = flat:Dot(away)
+				if awaySpeed < leastAway then
+					sideways += (leastAway - awaySpeed) / outward
+					flat = forward + right * sideways
+				end
 			end
 		end
 		itemVelocity = flat + Vector3.yAxis * itemVelocity.Y
 		part.AssemblyLinearVelocity = itemVelocity
 		pace += onward
 
-		dropped.Align.CFrame = if ground
-			then CFrame.fromRotationBetweenVectors(Vector3.yAxis, ground.Normal) * dropped.Rotation
-			else dropped.Rotation
 		if ground then
 			dropped.GroundY = ground.Position.Y
 			if ground.Instance.Name == SLIDE_NAME then

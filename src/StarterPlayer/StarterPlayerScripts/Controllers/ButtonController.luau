@@ -24,7 +24,7 @@ end
 
 -- A UIScale scales from a gui's corner, and a UIListLayout would let it grow over its neighbours, so
 -- the gui moves into an invisible holder that takes its place and is scaled from the holder's center
-local function makeScalable(gui: GuiObject): UIScale
+function ButtonController.MakeScalable(gui: GuiObject): UIScale
 	local holder = Instance.new("Frame")
 	holder.Name = `{gui.Name}Holder`
 	holder.BackgroundTransparency = 1
@@ -58,9 +58,9 @@ end
 -- The button grows while hovered and presses down while held. Anything in scaledWith, like the
 -- icon next to it on a sign, grows and presses along with it
 function ButtonController.Animate(button: GuiButton, scaledWith: { GuiObject }?)
-	local scales = { makeScalable(button) }
+	local scales = { ButtonController.MakeScalable(button) }
 	for _, gui in scaledWith or {} do
-		table.insert(scales, makeScalable(gui))
+		table.insert(scales, ButtonController.MakeScalable(gui))
 	end
 
 	local hovered, pressed = false, false
@@ -143,7 +143,7 @@ end
 -- For buttons already at their full size, which can't grow on hover: they only press down while
 -- held. The caller says when that is, since keys can hold them down as well as touches
 function ButtonController.AnimatePress(button: GuiButton): (held: boolean) -> ()
-	local scale = makeScalable(button)
+	local scale = ButtonController.MakeScalable(button)
 	local isHeld = false
 	return function(held: boolean)
 		if held == isHeld then

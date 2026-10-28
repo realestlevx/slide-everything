@@ -29,6 +29,13 @@ local MAX_TEXT = "MAX" -- On the button once there's nothing left to buy
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
 
+-- While the player has the cash for something on one of their own signs, the whole sign is highlighted.
+-- It fades in and out instead of popping
+local HIGHLIGHT_COLOR = Color3.new(1, 1, 1)
+local HIGHLIGHT_FILL_TRANSPARENCY = 0.9
+local HIGHLIGHT_OUTLINE_TRANSPARENCY = 0
+local HIGHLIGHT_FADE = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
 -- Only a place's owner sees its signs. On everyone else's screen the copies of its panels are off,
 -- and everything in the place's Signs folder is hidden: the boards, their lights and any other guis
 local SIGNS_FOLDER_NAME = "Signs"
@@ -37,11 +44,14 @@ type Panel = {
 	Button: GuiButton?,
 	Price: TextLabel?,
 	Value: TextLabel?,
+	NextPrice: number?, -- What its button buys the next one for. Nil at MAX, or before the place's attributes are in
 }
 
 type Sign = {
 	Place: Folder,
 	Gui: SurfaceGui, -- This player's copy, in PlayerGui
+	Highlight: Highlight, -- Made on this client, in the sign's model
+	Lit: boolean, -- Whether the highlight is on, or fading in
 	Panels: { [string]: Panel }, -- SLOTS_PANEL or an upgrade's name -> its labels
 }
 
@@ -83,6 +93,53 @@ local function isOnSign(place: Folder, instance: Instance): boolean
 	return folder ~= nil and instance:IsDescendantOf(folder)
 end
 
+-- The whole sign a panel gui is on: its model in the place's Signs folder, or just the gui's part
+-- if it isn't in one
+local function getBoard(place: Folder, original: SurfaceGui): Instance?
+	local folder = place:FindFirstChild(SIGNS_FOLDER_NAME)
+	local current = original.Parent
+	while folder and current and current.Parent ~= folder do
+		current = current.Parent
+	end
+	return current or original.Parent
+end
+
+-- Fades the sign's highlight in or out. It's turned off once it's faded out, so it doesn't count
+-- towards the highlights Roblox will draw at once. A new fade cancels one that's still going
+local function setLit(sign: Sign, lit: boolean)
+	if sign.Lit == lit then
+		return
+	end
+	sign.Lit = lit
+	local highlight = sign.Highlight
+	highlight.Enabled = true
+	local tween = TweenService:Create(highlight, HIGHLIGHT_FADE, {
+		FillTransparency = if lit then HIGHLIGHT_FILL_TRANSPARENCY else 1,
+		OutlineTransparency = if lit then HIGHLIGHT_OUTLINE_TRANSPARENCY else 1,
+	})
+	tween.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed and not sign.Lit then
+			highlight.Enabled = false
+		end
+	end)
+	tween:Play()
+end
+
+-- On while the place is this player's and their cash covers the next price of any panel on the sign
+local function refreshHighlight(sign: Sign)
+	local money = LocalPlayer:GetAttribute("Money")
+	local affordable = false
+	if typeof(money) == "number" and isOwner(sign.Place) then
+		for _, panel in sign.Panels do
+			if panel.NextPrice and money >= panel.NextPrice then
+				affordable = true
+				break
+			end
+		end
+	end
+	setLit(sign, affordable)
+end
+
 -- When the place changes hands, its signs show or hide for this player to match
 local function refreshOwner(place: Folder)
 	local owned = isOwner(place)
@@ -95,11 +152,13 @@ local function refreshOwner(place: Folder)
 	for _, sign in signs do
 		if sign.Place == place then
 			sign.Gui.Enabled = owned
+			refreshHighlight(sign)
 		end
 	end
 end
 
 local function show(panel: Panel, value: string, price: number?)
+	panel.NextPrice = price
 	if panel.Value then
 		panel.Value.Text = value
 	end
@@ -144,6 +203,7 @@ local function refreshPlace(place: Folder)
 			for name, panel in sign.Panels do
 				refreshPanel(place, name, panel)
 			end
+			refreshHighlight(sign)
 		end
 	end
 end
@@ -172,6 +232,7 @@ local function copySign(place: Folder, original: SurfaceGui)
 	local old = signs[original]
 	if old then
 		old.Gui:Destroy()
+		old.Highlight:Destroy()
 	end
 
 	local gui = original:Clone()
@@ -180,7 +241,18 @@ local function copySign(place: Folder, original: SurfaceGui)
 	gui.Enabled = isOwner(place)
 	original.Enabled = false
 
-	local sign: Sign = { Place = place, Gui = gui, Panels = {} }
+	-- Occluded, so it doesn't show through the floors and walls between the player and the sign. It
+	-- starts faded out and off
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "AffordHighlight"
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+	highlight.FillColor = HIGHLIGHT_COLOR
+	highlight.FillTransparency = 1
+	highlight.OutlineColor = HIGHLIGHT_COLOR
+	highlight.OutlineTransparency = 1
+	highlight.Enabled = false
+
+	local sign: Sign = { Place = place, Gui = gui, Highlight = highlight, Lit = false, Panels = {} }
 	for name, frameName in panelFrames do
 		local frame = gui:FindFirstChild(frameName, true)
 		if not frame then
@@ -215,15 +287,18 @@ local function copySign(place: Folder, original: SurfaceGui)
 	end
 	signs[original] = sign
 
-	-- The original leaves with its part when that streams out, and the copy goes with it
+	-- The original leaves with its part when that streams out, and the copy and highlight go with it
 	original.AncestryChanged:Connect(function()
 		if not original:IsDescendantOf(workspace) and signs[original] == sign then
 			signs[original] = nil
 			gui:Destroy()
+			highlight:Destroy()
 		end
 	end)
 
 	gui.Parent = PlayerGui
+	highlight.Parent = getBoard(place, original)
+	refreshHighlight(sign)
 end
 
 -- Signs stream in a part at a time, and each part is hidden as it arrives if the sign isn't this player's
@@ -296,6 +371,12 @@ function SignController.Start()
 			refreshOwner(place)
 		end)
 	end
+
+	LocalPlayer:GetAttributeChangedSignal("Money"):Connect(function()
+		for _, sign in signs do
+			refreshHighlight(sign)
+		end
+	end)
 
 	BuySlotResult.OnClientEvent:Connect(function(bought: boolean)
 		onResult(SLOTS_PANEL, bought)

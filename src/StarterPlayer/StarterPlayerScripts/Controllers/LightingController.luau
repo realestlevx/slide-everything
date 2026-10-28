@@ -58,6 +58,47 @@ local LOOKS: { [string]: Values } = {
 			TintColor = Color3.fromRGB(242, 250, 238),
 		},
 	},
+	-- Murky and overcast: dim, washed-out sunlight through a thick olive haze that closes in, with
+	-- muddy shadows
+	Swamp = {
+		Lighting = {
+			Brightness = 1.2,
+			Ambient = Color3.fromRGB(24, 26, 16),
+			OutdoorAmbient = Color3.fromRGB(105, 110, 85),
+			ColorShift_Top = Color3.fromRGB(205, 210, 160),
+			ColorShift_Bottom = Color3.fromRGB(18, 20, 8),
+			FogColor = Color3.fromRGB(95, 102, 74),
+			FogStart = 60,
+			FogEnd = 600,
+			ExposureCompensation = -0.15,
+		},
+		Correction = {
+			Brightness = -0.02,
+			Contrast = 0.08,
+			Saturation = -0.12,
+			TintColor = Color3.fromRGB(236, 242, 220),
+		},
+	},
+	-- Hot and bright: a strong warm sun, shadows lit orange by the sand and a pale heat haze far off
+	Dunes = {
+		Lighting = {
+			Brightness = 2.6,
+			Ambient = Color3.fromRGB(40, 28, 14),
+			OutdoorAmbient = Color3.fromRGB(175, 150, 115),
+			ColorShift_Top = Color3.fromRGB(255, 215, 150),
+			ColorShift_Bottom = Color3.fromRGB(45, 25, 8),
+			FogColor = Color3.fromRGB(235, 212, 165),
+			FogStart = 250,
+			FogEnd = 1300,
+			ExposureCompensation = 0.05,
+		},
+		Correction = {
+			Brightness = 0.01,
+			Contrast = 0.1,
+			Saturation = 0.06,
+			TintColor = Color3.fromRGB(255, 244, 226),
+		},
+	},
 }
 
 local correction: ColorCorrectionEffect

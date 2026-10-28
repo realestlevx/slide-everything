@@ -103,7 +103,8 @@ end
 
 -- Outlines whatever the prompt belongs to while it's in range, fading out the farther away the player
 -- gets. Made on the client, so only this player sees it, and destroyed when the prompt hides instead
--- of being kept around disabled. Returns the function that removes it
+-- of being kept around disabled. Occluded, so it doesn't show through walls. Returns the function
+-- that removes it
 local function createHighlight(prompt)
 	local holder = prompt.Parent
 	local target = holder and holder.Parent
@@ -113,6 +114,7 @@ local function createHighlight(prompt)
 
 	local highlight = Instance.new("Highlight")
 	highlight.Name = "PromptHighlight"
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
 	highlight.FillColor = Color3.new(1, 1, 1)
 	highlight.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY
 	highlight.OutlineColor = Color3.new(1, 1, 1)

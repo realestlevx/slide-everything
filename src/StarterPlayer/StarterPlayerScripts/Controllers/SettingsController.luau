@@ -23,11 +23,25 @@ local ICON_IMAGE = "rbxassetid://18801194936"
 local ICON_IMAGE_SCALE = 0.75 -- Of the button, up from TopbarPlus's 0.5
 local ICON_CAPTION = "Settings"
 local ICON_ORDER = 2 -- After the Inventory button, which keeps TopbarPlus's own order of a little over 1
--- The menu grows from this share of its size as it opens, overshooting a little, and shrinks back
--- to it as it closes, the same as the backpack
-local OPEN_SCALE = 0.85
-local OPEN_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local CLOSE_INFO = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+-- The menu opens by fading in as it grows from its center and rises into place, overshooting a
+-- little, and closes by fading out as it shrinks and drops back away
+local CLOSED_SCALE = 0.85 -- Of its size
+local CLOSED_DROP = 0.08 -- Of its height, how far below its place it rises from and drops back to
+local OPEN_POSITION = UDim2.fromScale(0.5, 0.5) -- In the holder that takes its place (see ButtonController)
+local CLOSED_POSITION = UDim2.fromScale(0.5, 0.5 + CLOSED_DROP)
+local OPEN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local OPEN_FADE_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out) -- Solid before it settles
+local CLOSE_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+-- The properties that fade, by the classes that have them. Each fades from what it's set to in
+-- Studio up to fully see-through
+local FADED_PROPERTIES = {
+	GuiObject = { "BackgroundTransparency" },
+	TextLabel = { "TextTransparency", "TextStrokeTransparency" },
+	TextButton = { "TextTransparency", "TextStrokeTransparency" },
+	ImageLabel = { "ImageTransparency" },
+	ImageButton = { "ImageTransparency" },
+	UIStroke = { "Transparency" },
+}
 -- While it's open the world behind it blurs a little and the camera widens its view
 local BLUR_SIZE = 12
 local FOV_BOOST = 10 -- Degrees added to the camera's FieldOfView
@@ -92,6 +106,9 @@ local openVersion = 0 -- Counts opens and closes, so a close that's been reopene
 -- Parts of the Settings gui, which is remade on every respawn, so they're found again each time
 local main: GuiObject? = nil
 local openScale: UIScale? = nil
+-- Each faded thing in the menu -> its faded properties -> what they're at fully shown
+local fadeBases: { [Instance]: { [string]: number } } = {}
+local shown = Instance.new("NumberValue") -- How far the menu's faded in, 0 to 1, tweened in and out
 
 local blur: BlurEffect? = nil
 local fovBoost = Instance.new("NumberValue") -- How far the view's widened right now, tweened in and out
@@ -242,6 +259,38 @@ local function widen()
 	widenedCamera = camera
 end
 
+local function fade(instance: Instance, properties: { [string]: number })
+	for property, base in properties do
+		(instance :: any)[property] = 1 - (1 - base) * shown.Value
+	end
+end
+
+local function fadeAll()
+	for instance, properties in fadeBases do
+		fade(instance, properties)
+	end
+end
+
+-- Keeps what it's at now as fully shown, so it's tracked before it's ever faded. Buttons' holders
+-- (see ButtonController) come in after it's bound, and a button moved into one is already tracked
+local function trackFade(bases: { [Instance]: { [string]: number } }, instance: Instance)
+	if bases[instance] then
+		return
+	end
+	local properties = {}
+	for className, names in FADED_PROPERTIES do
+		if instance:IsA(className) then
+			for _, property in names do
+				properties[property] = (instance :: any)[property]
+			end
+		end
+	end
+	if next(properties) ~= nil then
+		bases[instance] = properties
+		fade(instance, properties)
+	end
+end
+
 local function setOpen(open: boolean)
 	isOpen = open
 	openVersion += 1
@@ -268,13 +317,21 @@ local function setOpen(open: boolean)
 		return
 	end
 	if open then
+		-- From fully closed, or from wherever a close it interrupts had got to
 		if not frame.Visible then
-			scale.Scale = OPEN_SCALE
+			scale.Scale = CLOSED_SCALE
+			frame.Position = CLOSED_POSITION
+			shown.Value = 0
+			fadeAll()
 		end
 		frame.Visible = true
 		TweenService:Create(scale, OPEN_INFO, { Scale = 1 }):Play()
+		TweenService:Create(frame, OPEN_INFO, { Position = OPEN_POSITION }):Play()
+		TweenService:Create(shown, OPEN_FADE_INFO, { Value = 1 }):Play()
 	else
-		TweenService:Create(scale, CLOSE_INFO, { Scale = OPEN_SCALE }):Play()
+		TweenService:Create(scale, CLOSE_INFO, { Scale = CLOSED_SCALE }):Play()
+		TweenService:Create(frame, CLOSE_INFO, { Position = CLOSED_POSITION }):Play()
+		TweenService:Create(shown, CLOSE_INFO, { Value = 0 }):Play()
 		task.delay(CLOSE_INFO.Time, function()
 			if openVersion == version then
 				frame.Visible = false
@@ -351,12 +408,22 @@ local function bindGui(gui: Instance)
 	local holder = frame:WaitForChild("Holder")
 
 	main = frame
-	local scale = Instance.new("UIScale")
-	scale.Name = "OpenScale"
-	scale.Scale = if isOpen then 1 else OPEN_SCALE
-	scale.Parent = frame
+	-- Scaled from its center rather than the top edge it's placed by
+	local scale = ButtonController.MakeScalable(frame)
+	scale.Scale = if isOpen then 1 else CLOSED_SCALE
 	openScale = scale
+	frame.Position = if isOpen then OPEN_POSITION else CLOSED_POSITION
 	frame.Visible = isOpen
+
+	local bases = {}
+	fadeBases = bases
+	trackFade(bases, frame)
+	for _, descendant in frame:GetDescendants() do
+		trackFade(bases, descendant)
+	end
+	frame.DescendantAdded:Connect(function(descendant)
+		trackFade(bases, descendant)
+	end)
 
 	for _, slider in sliders do
 		task.spawn(bindSlider, slider, holder:WaitForChild(slider.Row))
@@ -489,6 +556,7 @@ function SettingsController.Start()
 	LocalPlayer:GetAttributeChangedSignal("FastMode"):Connect(loadSavedFastMode)
 	loadSavedFastMode()
 
+	shown.Changed:Connect(fadeAll)
 	createBlur()
 	-- After every other camera step, the drop camera's too, and taken off once the frame's drawn
 	RunService:BindToRenderStep(FOV_STEP_NAME, Enum.RenderPriority.Last.Value, widen)
