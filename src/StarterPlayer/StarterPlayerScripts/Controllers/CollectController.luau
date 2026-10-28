@@ -70,6 +70,7 @@ local flights: { Flight } = {} -- Collected items still on their way into the pl
 local gemsLeft = 0 -- Gems found by collected items that haven't popped out yet
 local lastCash: { [Folder]: number } = {} -- Each place's CollectCash when it was last seen
 local tickSounds: { Sound } = {} -- Ticks still playing, oldest first
+local hiddenPlaces: { [Folder]: boolean } = {} -- Places whose stacks are hidden (see SetHidden)
 
 local CollectController = {}
 
@@ -167,8 +168,23 @@ function CollectController.AddToPile(place: Folder, item: Items.Item, instant: b
 		ItemModel.SetLocalTransparency(copy, 1)
 		ItemModel.TweenLocalTransparency(copy, APPEAR_INFO, 0)
 	end
+	if hiddenPlaces[place] then
+		ItemModel.SetHidden(copy, true)
+	end
 	copy.Parent = workspace
 	table.insert(stack, { Part = copy })
+end
+
+-- Hides the place's stack on this screen, or shows it again, for Fast Mode. Items still land on
+-- hidden ones, so it's the same stack once it's back
+function CollectController.SetHidden(place: Folder, hidden: boolean)
+	if (hiddenPlaces[place] == true) == hidden then
+		return
+	end
+	hiddenPlaces[place] = if hidden then true else nil
+	for _, stackItem in getStack(place) do
+		ItemModel.SetHidden(stackItem.Part, hidden)
+	end
 end
 
 local function addPending(place: Folder)

@@ -11,10 +11,7 @@ local HudController = require(script.Parent.HudController)
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- The player has left their base once they're past the edge of its ground (BaseMin and BaseMax, see
--- PlaceService), or have fallen this far below the top of it
-local EDGE_MARGIN = 2 -- Studs past the edge they can be, on a lip or a ledge, and still count as in it
-local FALL_DEPTH = 12 -- Studs
+-- The player has left their base once they're no longer in it (see Places.IsInBase)
 local CHECK_INTERVAL = 0.2 -- Seconds between checks
 
 -- Touching a part with this name anywhere in Workspace sends the player back to their base
@@ -71,19 +68,6 @@ local function getRoot(): BasePart?
 	return if root and root:IsA("BasePart") then root else nil
 end
 
--- Without its box the base can't be measured, so the player counts as in it
-local function isInBase(place: Folder, position: Vector3): boolean
-	local low, high = place:GetAttribute("BaseMin"), place:GetAttribute("BaseMax")
-	if typeof(low) ~= "Vector3" or typeof(high) ~= "Vector3" then
-		return true
-	end
-	return position.X >= low.X - EDGE_MARGIN
-		and position.X <= high.X + EDGE_MARGIN
-		and position.Z >= low.Z - EDGE_MARGIN
-		and position.Z <= high.Z + EDGE_MARGIN
-		and position.Y >= high.Y - FALL_DEPTH
-end
-
 -- How many floors the place has for its owner, counting the first (see FloorService)
 local function getFloorCount(place: Folder): number
 	local count = place:GetAttribute("Floors")
@@ -93,7 +77,7 @@ end
 local function checkOutside()
 	local place = getOwnPlace()
 	local root = getRoot()
-	HudController.SetOutsideBase(place ~= nil and root ~= nil and not isInBase(place, root.Position))
+	HudController.SetOutsideBase(place ~= nil and root ~= nil and not Places.IsInBase(place, root.Position))
 	HudController.SetFloorsUnlocked(place ~= nil and getFloorCount(place) > 1)
 end
 

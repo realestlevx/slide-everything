@@ -5,18 +5,22 @@ local UserGameSettings = UserSettings():GetService("UserGameSettings")
 -- On a graphics setting above 5, every emitter's Rate is raised to make up for it, so it looks the
 -- way it does on max graphics. Lower settings, and Automatic (whose level scripts can't read), keep
 -- the thinning. The Rate an emitter was designed with is kept as its BaseRate attribute, which
--- copies of it carry along
+-- copies of it carry along. Fast Mode stops every emitter, bursts too (see SetOff)
 local BASE_RATE_ATTRIBUTE = "BaseRate"
 local MIN_BOOSTED_SETTING = 6 -- Lowest graphics setting (1 to 10) that gets max graphics particles
 local MAX_RENDER_LEVEL = 21
 
 local emitters: { [ParticleEmitter]: boolean } = {}
 local multiplier = 1
+local off = false
 
 local ParticleQualityController = {}
 
 -- The settings menu runs graphics setting N at render level N * 2.1, rounded down (10 runs at 21)
 local function getMultiplier(): number
+	if off then
+		return 0
+	end
 	local setting = UserGameSettings.SavedQualityLevel.Value -- 0 is Automatic
 	if setting < MIN_BOOSTED_SETTING then
 		return 1
@@ -47,6 +51,24 @@ local function update()
 	multiplier = getMultiplier()
 	for emitter in emitters do
 		apply(emitter)
+	end
+end
+
+-- Every emitter stops sending out particles, and what they've already sent goes, for Fast Mode
+function ParticleQualityController.SetOff(isOff: boolean)
+	off = isOff
+	update()
+	if off then
+		for emitter in emitters do
+			emitter:Clear()
+		end
+	end
+end
+
+-- A burst of count particles, unless they're off
+function ParticleQualityController.Emit(emitter: ParticleEmitter, count: number)
+	if not off then
+		emitter:Emit(count)
 	end
 end
 

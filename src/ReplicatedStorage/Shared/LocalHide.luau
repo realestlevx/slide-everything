@@ -14,27 +14,43 @@ local HIDING: { { Class: string, Properties: { [string]: any } } } = {
 	{ Class = "Trail", Properties = { Enabled = false } },
 }
 
--- Each hidden thing -> what the properties that hide it were before. Weak, so things that stream out
--- aren't kept
-local hidden: { [Instance]: { [string]: any } } = setmetatable({}, { __mode = "k" }) :: any
+type Hidden = {
+	Saved: { [string]: any }, -- What the properties that hide it were before
+	Removed: RBXScriptConnection, -- Forgets it once it's out of the game, like when it streams out
+}
+
+-- Each hidden thing. Not weak: an instance no script holds on to can drop out of a weak table while
+-- it's still in the game, and then it could never be put back
+local hidden: { [Instance]: Hidden } = {}
 
 function LocalHide.Set(instance: Instance, hide: boolean)
 	for _, rule in HIDING do
 		if not instance:IsA(rule.Class) then
 			continue
 		end
-		local saved = hidden[instance]
-		if hide and not saved then
-			saved = {}
+		local entry = hidden[instance]
+		if hide and not entry then
+			local saved = {}
 			for property, value in rule.Properties do
 				saved[property] = (instance :: any)[property];
 				(instance :: any)[property] = value
 			end
-			hidden[instance] = saved
-		elseif not hide and saved then
-			for property, value in saved do
+			local added: Hidden
+			added = {
+				Saved = saved,
+				Removed = instance.AncestryChanged:Connect(function()
+					if not instance:IsDescendantOf(game) then
+						added.Removed:Disconnect()
+						hidden[instance] = nil
+					end
+				end),
+			}
+			hidden[instance] = added
+		elseif not hide and entry then
+			for property, value in entry.Saved do
 				(instance :: any)[property] = value
 			end
+			entry.Removed:Disconnect()
 			hidden[instance] = nil
 		end
 		return

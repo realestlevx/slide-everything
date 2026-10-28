@@ -40,6 +40,8 @@ Boundless:
 
 Admin: $1.5Qi (1 in 350B) 15B/s
 
+
+Limited: 50% - 200% (depends on chest / unlock method)
 Upgrades:
 Roll Slots: $800 > $10k > $250k > $2M > $51M >
 Slot upgrade $100 > $300 > $1k > 2.5k > 7k > 18k > 50k

@@ -16,6 +16,7 @@ local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 local ButtonController = require(script.Parent.ButtonController)
 local FloatController = require(script.Parent.FloatController)
 local InventoryController = require(script.Parent.InventoryController)
+local ParticleQualityController = require(script.Parent.ParticleQualityController)
 local PromptController = require(script.Parent.PromptController)
 
 local RemoveFromSlot = ReplicatedStorage.Remotes.RemoveFromSlot
@@ -339,7 +340,7 @@ local function burstParticles(slot: Model, name: string)
 	for _, emitter in particles:GetDescendants() do
 		local count = emitter:GetAttribute("EmitCount")
 		if emitter:IsA("ParticleEmitter") and typeof(count) == "number" then
-			emitter:Emit(count)
+			ParticleQualityController.Emit(emitter, count)
 		end
 	end
 end

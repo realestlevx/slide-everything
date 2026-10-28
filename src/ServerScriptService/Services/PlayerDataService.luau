@@ -29,6 +29,7 @@ local PROFILE_TEMPLATE = {
 	-- Volume name (see Volumes) -> how loud it plays for them, 0 to 1 of how loud it's mixed, 1 if
 	-- missing; set with the settings menu's sliders
 	Volumes = {} :: { [string]: number },
+	FastMode = false, -- Set with the settings menu's Fast Mode button
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
@@ -101,6 +102,7 @@ local function onPlayerAdded(player: Player)
 		for name in Volumes do
 			player:SetAttribute(`{name}Volume`, profile.Data.Volumes[name] or 1)
 		end
+		player:SetAttribute("FastMode", profile.Data.FastMode)
 		loaded:Fire(player)
 	else
 		profile:EndSession()

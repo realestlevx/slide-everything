@@ -12,6 +12,7 @@ local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
 
 local FloatController = require(script.Parent.FloatController)
+local ParticleQualityController = require(script.Parent.ParticleQualityController)
 local PromptController = require(script.Parent.PromptController)
 
 local RollResult = ReplicatedStorage.Remotes.RollResult
@@ -163,7 +164,7 @@ local function burstFinishParticles(place: Folder, number: number)
 	for _, child in attachment:GetChildren() do
 		local count = child:GetAttribute("EmitCount")
 		if child:IsA("ParticleEmitter") and typeof(count) == "number" then
-			child:Emit(count)
+			ParticleQualityController.Emit(child, count)
 		end
 	end
 end

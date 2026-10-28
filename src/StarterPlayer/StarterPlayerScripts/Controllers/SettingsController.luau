@@ -11,6 +11,7 @@ local Volumes = require(ReplicatedStorage.Shared.Volumes)
 local ButtonController = require(script.Parent.ButtonController)
 local HudController = require(script.Parent.HudController)
 
+local SetFastMode = ReplicatedStorage.Remotes.SetFastMode
 local SetLuck = ReplicatedStorage.Remotes.SetLuck
 local SetVolume = ReplicatedStorage.Remotes.SetVolume
 local LocalPlayer = Players.LocalPlayer
@@ -43,6 +44,13 @@ local VOLUME_ROWS = {
 -- upgrade gives. The label on its bar shows both, like "30/50 Luck"
 local LUCK_ROW = "Luck"
 local VALUE_LABEL_NAME = "Value"
+-- The row with the Fast Mode switch: a button that's red with "Off" on its Text label while it's
+-- off, and green with "On" while it's on. It's saved, and put back as it was when they join
+local FAST_MODE_ROW = "FastMode"
+local FAST_MODE_BUTTON_NAME = "Off/On"
+local FAST_MODE_TEXT_NAME = "Text"
+local FAST_MODE_ON_COLOR = Color3.fromRGB(96, 253, 29)
+local FAST_MODE_OFF_COLOR = Color3.fromRGB(253, 3, 3)
 
 -- A knob dragged along the bar of one of the gui's rows
 type Slider = {
@@ -70,7 +78,12 @@ type Volume = {
 	Slider: Slider, -- Its Fraction is the volume
 }
 
-local SettingsController = {}
+local fastModeChanged = Instance.new("BindableEvent")
+
+local SettingsController = {
+	-- Fires with true as the player turns Fast Mode on, and false as they turn it off
+	FastModeChanged = fastModeChanged.Event,
+}
 
 local icon: any = nil
 local isOpen = false
@@ -86,6 +99,12 @@ local fovBoost = Instance.new("NumberValue") -- How far the view's widened right
 local widenedCamera: Camera? = nil
 local unwidenedFov = 0
 local widenedFov = 0
+
+local fastMode = false
+-- Set once the player clicks it, so their saved choice reaching the client late can't switch it back
+local fastModeClicked = false
+local fastModeButton: GuiButton? = nil
+local fastModeText: TextLabel? = nil
 
 local sliders: { Slider } = {}
 local press: InputObject? = nil -- The click or touch dragging a slider
@@ -287,6 +306,45 @@ local function bindSlider(slider: Slider, row: Instance)
 	render(slider)
 end
 
+local function showFastMode()
+	local button, text = fastModeButton, fastModeText
+	if button then
+		button.BackgroundColor3 = if fastMode then FAST_MODE_ON_COLOR else FAST_MODE_OFF_COLOR
+	end
+	if text then
+		text.Text = if fastMode then "On" else "Off"
+	end
+end
+
+local function setFastMode(on: boolean)
+	if on == fastMode then
+		return
+	end
+	fastMode = on
+	showFastMode()
+	fastModeChanged:Fire(on)
+end
+
+local function loadSavedFastMode()
+	local saved = LocalPlayer:GetAttribute("FastMode")
+	if typeof(saved) == "boolean" and not fastModeClicked then
+		setFastMode(saved)
+	end
+end
+
+local function bindFastMode(row: Instance)
+	local button = row:WaitForChild(FAST_MODE_BUTTON_NAME) :: GuiButton
+	fastModeButton = button
+	fastModeText = button:WaitForChild(FAST_MODE_TEXT_NAME) :: TextLabel
+	showFastMode()
+	ButtonController.Animate(button)
+	button.Activated:Connect(function()
+		fastModeClicked = true
+		setFastMode(not fastMode)
+		SetFastMode:FireServer(fastMode)
+	end)
+end
+
 local function bindGui(gui: Instance)
 	local frame = gui:WaitForChild("Main") :: GuiObject
 	local exitButton = frame:WaitForChild("Header"):WaitForChild("ExitButton") :: GuiButton
@@ -303,6 +361,7 @@ local function bindGui(gui: Instance)
 	for _, slider in sliders do
 		task.spawn(bindSlider, slider, holder:WaitForChild(slider.Row))
 	end
+	task.spawn(bindFastMode, holder:WaitForChild(FAST_MODE_ROW))
 
 	ButtonController.Animate(exitButton)
 	exitButton.Activated:Connect(function()
@@ -417,11 +476,18 @@ local function createIcon()
 		end)
 end
 
+-- As the player left it last time, once their saved data's in, and off until then
+function SettingsController.IsFastMode(): boolean
+	return fastMode
+end
+
 function SettingsController.Start()
 	for name in Volumes do
 		createVolume(name)
 	end
 	createLuck()
+	LocalPlayer:GetAttributeChangedSignal("FastMode"):Connect(loadSavedFastMode)
+	loadSavedFastMode()
 
 	createBlur()
 	-- After every other camera step, the drop camera's too, and taken off once the frame's drawn

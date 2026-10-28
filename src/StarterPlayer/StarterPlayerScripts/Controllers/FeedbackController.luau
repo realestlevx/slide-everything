@@ -1,9 +1,19 @@
 local AvatarEditorService = game:GetService("AvatarEditorService")
+local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SocialService = game:GetService("SocialService")
 
--- The prompts in Workspace["Favorites/Feedback"] open Roblox popups, picked by an attribute on the
--- prompt's part:
+local LocalHide = require(ReplicatedStorage.Shared.LocalHide)
+local Places = require(ReplicatedStorage.Shared.Places)
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Each place has its own favorite goal sign and mailbox in this folder, seen only by its owner: on
+-- everyone else's screen they're hidden, and their prompts are the owner's alone (see PromptController)
+local FOLDER_NAME = "Favorites/Feedback"
+
+-- The prompts open Roblox popups, picked by an attribute on the prompt's part:
 -- - Feedback (the mailbox) opens the feedback form. What players send shows up in the Creator
 --   Dashboard. The form only opens in the public game, and not for the game's owner
 -- - Favorite (the favorite goal sign) asks to favorite the game
@@ -12,7 +22,32 @@ local FAVORITE_ATTRIBUTE = "Favorite"
 
 local FeedbackController = {}
 
+local function isOwner(place: Folder): boolean
+	return place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+end
+
+local function refreshHidden(place: Folder, instance: Instance)
+	if instance:FindFirstAncestor(FOLDER_NAME) then
+		LocalHide.Set(instance, not isOwner(place))
+	end
+end
+
 function FeedbackController.Start()
+	-- The sign and mailbox stream in and out, so their parts are hidden as they arrive
+	for _, place in Places.GetAll() do
+		for _, descendant in place:GetDescendants() do
+			refreshHidden(place, descendant)
+		end
+		place.DescendantAdded:Connect(function(descendant)
+			refreshHidden(place, descendant)
+		end)
+		place:GetAttributeChangedSignal("OwnerUserId"):Connect(function()
+			for _, descendant in place:GetDescendants() do
+				refreshHidden(place, descendant)
+			end
+		end)
+	end
+
 	ProximityPromptService.PromptTriggered:Connect(function(prompt: ProximityPrompt)
 		local part = prompt.Parent
 		if not part then

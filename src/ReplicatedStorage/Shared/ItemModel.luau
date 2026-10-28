@@ -8,6 +8,9 @@ local ItemModel = {}
 
 -- Turned off while the item is hidden, and back on as it shows again
 local EFFECT_CLASSES = { "ParticleEmitter", "Trail", "Beam", "Light" }
+-- A part's own Transparency while SetHidden has the item hidden. Kept on the part rather than here,
+-- so it goes and comes back with it if it streams out and in meanwhile
+local BASE_TRANSPARENCY_ATTRIBUTE = "BaseTransparency"
 
 type Inner = {
 	Part: BasePart,
@@ -26,6 +29,7 @@ type Record = {
 	-- tween on their own without undoing each other
 	Focus: number,
 	Transparency: number,
+	Hidden: boolean, -- See SetHidden
 	Tween: Tween?, -- Scaling, if it's running
 	ScaleValue: NumberValue?,
 	FocusTween: Tween?,
@@ -56,6 +60,19 @@ local function applyScale(root: BasePart, record: Record)
 	end
 end
 
+local function setPartHidden(part: BasePart, hidden: boolean)
+	local base = part:GetAttribute(BASE_TRANSPARENCY_ATTRIBUTE)
+	if hidden then
+		if typeof(base) ~= "number" then
+			part:SetAttribute(BASE_TRANSPARENCY_ATTRIBUTE, part.Transparency)
+		end
+		part.Transparency = 1
+	elseif typeof(base) == "number" then
+		part.Transparency = base
+		part:SetAttribute(BASE_TRANSPARENCY_ATTRIBUTE, nil)
+	end
+end
+
 -- With streaming, the parts inside an item the server made can arrive after the item itself, still
 -- at full size, and ones that stream out come back as the server has them. Either way they're taken
 -- on at the size and fade the rest of the item is at
@@ -77,11 +94,12 @@ local function addLate(root: BasePart, record: Record, descendant: Instance)
 		applyScale(root, record)
 	elseif descendant:IsA("BasePart") then
 		descendant.LocalTransparencyModifier = root.LocalTransparencyModifier
+		setPartHidden(descendant, record.Hidden)
 	elseif isEffect(descendant) then
 		if record.Effects[descendant] == nil then
 			record.Effects[descendant] = (descendant :: any).Enabled
 		end
-		(descendant :: any).Enabled = record.Effects[descendant] and record.Transparency < 1
+		(descendant :: any).Enabled = record.Effects[descendant] and record.Transparency < 1 and not record.Hidden
 	end
 end
 
@@ -100,6 +118,7 @@ local function getRecord(root: BasePart): Record
 		Scale = 1,
 		Focus = 1,
 		Transparency = 0,
+		Hidden = false,
 		Tween = nil,
 		ScaleValue = nil,
 		FocusTween = nil,
@@ -124,7 +143,8 @@ local function getRecord(root: BasePart): Record
 end
 
 -- Welds the parts inside a fresh copy of an item to its outer part where they sit, and records it.
--- Call it before moving the copy
+-- Items cast no shadows: they float, slide and fly about, and a moving shadow is drawn again every
+-- frame. Call it before moving the copy
 function ItemModel.Prepare(root: BasePart)
 	-- A record from before would take the new welds on as late arrivals
 	local old = records[root]
@@ -136,10 +156,12 @@ function ItemModel.Prepare(root: BasePart)
 			descendant:Destroy()
 		end
 	end
+	root.CastShadow = false
 	for _, descendant in root:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = false
 			descendant.Massless = true
+			descendant.CastShadow = false
 			local weld = Instance.new("Weld")
 			weld.Part0 = root
 			weld.Part1 = descendant
@@ -251,7 +273,7 @@ end
 
 local function setEffects(record: Record, shown: boolean)
 	for effect, enabled in record.Effects do
-		(effect :: any).Enabled = shown and enabled
+		(effect :: any).Enabled = shown and enabled and not record.Hidden
 	end
 end
 
@@ -275,6 +297,22 @@ function ItemModel.TweenLocalTransparency(root: BasePart, info: TweenInfo, trans
 		TweenService:Create(part, info, { LocalTransparencyModifier = transparency }):Play()
 	end
 	setEffects(record, transparency < 1)
+end
+
+-- Hides the whole item on this screen, whatever it's faded to, or puts it back: its parts go fully
+-- see-through and its effects stop. Fades still run meanwhile, and show once it's back
+function ItemModel.SetHidden(root: BasePart, hidden: boolean)
+	local record = getRecord(root)
+	record.Hidden = hidden
+	for _, part in ItemModel.GetParts(root) do
+		setPartHidden(part, hidden)
+	end
+	setEffects(record, record.Transparency < 1)
+end
+
+function ItemModel.IsHidden(root: BasePart): boolean
+	local record = records[root]
+	return record ~= nil and record.Hidden
 end
 
 return ItemModel

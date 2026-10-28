@@ -30,7 +30,8 @@ local SEQUENCES = {
 	{ { "Cash", "Gem" } },
 }
 -- The top bar holds one of these at a time: the base buttons, the button back to the base once the
--- player's left it, or the drop view's Spectate. Whichever is leaving slides out before the next comes in
+-- player's left it, or the drop view's Spectate, and none while a menu like Settings is open.
+-- Whichever is leaving slides out before the next comes in
 local TOP_PIECES = { "BaseButtons", "OutsideBaseButtons", "Spectate" }
 -- The top bar's Market, Next, Back and Base buttons all move the player, so they share one cooldown:
 -- a click on any of them is ignored if one went through less than this long ago
@@ -186,7 +187,7 @@ local function isShown(name: string): boolean
 	if name == "Multiplier" and multiplier <= 1 then
 		return false
 	end
-	if name == "Inventory" and menuOpen then
+	if menuOpen and (name == "Inventory" or table.find(TOP_PIECES, name)) then
 		return false
 	end
 	if not dropView and (name == "BaseButtons" or name == "OutsideBaseButtons") then
@@ -401,14 +402,16 @@ function HudController.SetDropView(on: boolean)
 	dropViewChanged:Fire(on)
 end
 
--- Whether a menu that takes over the screen, like Settings, is open. The hotbar slides down out of
--- its way while one is, and back up once it's closed, unless the drop view still keeps it out
+-- Whether a menu that takes over the screen, like Settings, is open. The hotbar slides down and the
+-- top bar up out of its way while one is, and back once it's closed, unless the drop view still
+-- keeps them out
 function HudController.SetMenuOpen(open: boolean)
 	if open == menuOpen then
 		return
 	end
 	menuOpen = open
 	move("Inventory", isShown("Inventory"))
+	refreshTop()
 end
 
 -- Whether the player has left their base, which swaps the top bar's buttons for the one back to it

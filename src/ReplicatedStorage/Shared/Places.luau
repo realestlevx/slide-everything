@@ -100,6 +100,24 @@ function Places.GetSlots(place: Folder): { Model }
 	return slots
 end
 
+-- Whether a position is in the place's base: over its ground (BaseMin and BaseMax, see PlaceService),
+-- up to EDGE_MARGIN studs past its edge on a lip or a ledge, and not fallen more than FALL_DEPTH below
+-- the top of it. Without its box the base can't be measured, so everywhere counts as in it
+local EDGE_MARGIN = 2 -- Studs
+local FALL_DEPTH = 12 -- Studs
+
+function Places.IsInBase(place: Folder, position: Vector3): boolean
+	local low, high = place:GetAttribute("BaseMin"), place:GetAttribute("BaseMax")
+	if typeof(low) ~= "Vector3" or typeof(high) ~= "Vector3" then
+		return true
+	end
+	return position.X >= low.X - EDGE_MARGIN
+		and position.X <= high.X + EDGE_MARGIN
+		and position.Z >= low.Z - EDGE_MARGIN
+		and position.Z <= high.Z + EDGE_MARGIN
+		and position.Y >= high.Y - FALL_DEPTH
+end
+
 -- The slide is built of stages, Models in Workspace named Stage<N>, one after another down it
 function Places.IsStage(instance: Instance): boolean
 	return instance:IsA("Model") and instance.Parent == workspace and instance.Name:match("^Stage%d+$") ~= nil

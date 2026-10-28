@@ -1,6 +1,6 @@
 local HttpService = game:GetService("HttpService")
 
--- The FavoriteGoalSign model (in Workspace["Favorites/Feedback"]) shows how many players have
+-- Every place's FavoriteGoalSign model (in its Favorites/Feedback folder) shows how many players have
 -- favorited the game out of GOAL on a fill bar. Game servers can't call roblox.com, so the count comes
 -- from the games API through roproxy, which needs Allow HTTP Requests on in Game Settings > Security
 local SIGN_NAME = "FavoriteGoalSign"
@@ -8,14 +8,17 @@ local GOAL = 1000
 local REFRESH_INTERVAL = 300 -- Seconds between fetches
 local REQUEST_URL = "https://games.roproxy.com/v1/games/%d/favorites/count"
 
-local goalText: TextLabel
-local fill: GuiObject
+type Sign = { GoalText: TextLabel, Fill: GuiObject }
+local signs: { Sign } = {}
 
 local FavoriteGoalService = {}
 
 local function render(favorites: number)
-	goalText.Text = string.format("%d/%d FAVORITES", favorites, GOAL)
-	fill.Size = UDim2.new(math.clamp(favorites / GOAL, 0, 1), 0, fill.Size.Y.Scale, fill.Size.Y.Offset)
+	for _, sign in signs do
+		local fill = sign.Fill
+		sign.GoalText.Text = string.format("%d/%d FAVORITES", favorites, GOAL)
+		fill.Size = UDim2.new(math.clamp(favorites / GOAL, 0, 1), 0, fill.Size.Y.Scale, fill.Size.Y.Offset)
+	end
 end
 
 local function fetchFavorites(): number?
@@ -40,12 +43,18 @@ local function fetchFavorites(): number?
 end
 
 function FavoriteGoalService.Start()
-	local sign = workspace:FindFirstChild(SIGN_NAME, true)
-	if not sign then
+	-- The places are built by now (see PlaceBuilder), each with its own sign
+	for _, descendant in workspace:GetDescendants() do
+		if descendant.Name == SIGN_NAME then
+			table.insert(signs, {
+				GoalText = descendant:FindFirstChild("FavoriteGoalText", true) :: TextLabel,
+				Fill = descendant:FindFirstChild("Fill", true) :: GuiObject,
+			})
+		end
+	end
+	if #signs == 0 then
 		return
 	end
-	goalText = sign:FindFirstChild("FavoriteGoalText", true) :: TextLabel
-	fill = sign:FindFirstChild("Fill", true) :: GuiObject
 	render(0)
 
 	if not HttpService.HttpEnabled then
