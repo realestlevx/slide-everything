@@ -64,7 +64,13 @@ local slideRight: Vector3? = nil -- To the right looking down the slide, once a 
 local fadeScale = 1 -- Times FADE_START and FADE_END that walls fade at (see SetFadeScale)
 local hits = 0 -- Walls this player's drop has gone through, which raise the rest (see SetHits)
 
-local MultiplierWallController = {}
+local touched = Instance.new("BindableEvent")
+
+local MultiplierWallController = {
+	-- Fires with the wall and the part that touched it. Listened to on the walls rather than on what
+	-- touches them: dropped items bump the slide and each other thousands of times a second
+	Touched = touched.Event,
+}
 
 -- Every place drops onto the same slide, so any place's floor gives the way down it. Down -X until
 -- one has loaded
@@ -271,6 +277,12 @@ local function track(instance: Instance)
 		wall.Connections,
 		part:GetAttributeChangedSignal(Drops.MULTIPLIER_ATTRIBUTE):Connect(function()
 			showMultiplier(part, wall)
+		end)
+	)
+	table.insert(
+		wall.Connections,
+		part.Touched:Connect(function(hit)
+			touched:Fire(part, hit)
 		end)
 	)
 end

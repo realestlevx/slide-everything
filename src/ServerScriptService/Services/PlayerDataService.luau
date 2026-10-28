@@ -19,6 +19,9 @@ local PROFILE_TEMPLATE = {
 	BoughtSlots = {} :: { [string]: boolean }, -- Slot key -> true for every slot bought from the sign
 	Floors = 1, -- How many floors the place has for them, counting the first; see Floors
 	UpgradeLevels = {} :: { [string]: number }, -- Sign upgrade name (see SignUpgrades) -> level, 1 if missing
+	-- The luck their rolls are at, set with the settings menu's slider; see SignUpgrades.GetLuck.
+	-- Missing while it's all the way up, so it follows the Luck upgrade up as more is bought
+	Luck = nil :: number?,
 	-- Stand number (as text) -> Item Id of its last roll if it wasn't bought, put back on the stand on join
 	LastRolls = {} :: { [string]: string },
 	CollectCash = 0, -- Earned by drops, waiting on the place's collect pad to be picked up

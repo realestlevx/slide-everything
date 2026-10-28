@@ -593,43 +593,61 @@ local function onBuySlot(player: Player, place: any)
 	BuySlotResult:FireClient(player, true)
 end
 
-local function givePass(player: Player)
-	passOwners[player] = true
+-- Asks Roblox whether the player has the paid slots pass, a few times over if it can't be reached.
+-- Nil if it never answers
+local function askOwnsPass(player: Player): boolean?
+	if GamePasses.PaidSlots <= 0 then
+		return false
+	end
+	local ok, result
+	for attempt = 1, PASS_CHECK_ATTEMPTS do
+		ok, result = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, GamePasses.PaidSlots)
+		if ok or attempt == PASS_CHECK_ATTEMPTS or player.Parent ~= Players then
+			break
+		end
+		task.wait(PASS_CHECK_RETRY_DELAY)
+	end
+	if not ok then
+		warn(`Couldn't check whether {player.Name} has the paid slots pass: {result}`)
+		return nil
+	end
+	return result == true
+end
+
+-- Once it's known whether the player has the pass, their place is refreshed: their pass slots open up
+-- if they have it, and otherwise give back what's in them
+local function setPass(player: Player, owns: boolean)
+	if player.Parent ~= Players then
+		return
+	end
+	-- They may have bought it while it was being checked
+	passOwners[player] = passOwners[player] or owns
 	local place = PlaceService.GetPlace(player)
 	if place then
 		refreshPlace(place)
 	end
 end
 
--- Checked once as the player joins. Once it's known, their place is refreshed: their pass slots open
--- up if they have it, and otherwise give back what's in them. If Roblox can't be asked, it stays
--- unknown, and the pass slots hold on to their items without opening
+-- Checked as the player joins. If Roblox can't be asked, it stays unknown, and the pass slots hold on
+-- to their items without opening
 local function checkPass(player: Player)
-	local owns = false
-	if GamePasses.PaidSlots > 0 then
-		local ok, result
-		for attempt = 1, PASS_CHECK_ATTEMPTS do
-			ok, result = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, GamePasses.PaidSlots)
-			if ok or attempt == PASS_CHECK_ATTEMPTS or player.Parent ~= Players then
-				break
-			end
-			task.wait(PASS_CHECK_RETRY_DELAY)
-		end
-		if not ok then
-			warn(`Couldn't check whether {player.Name} has the paid slots pass: {result}`)
-			return
-		end
-		owns = result == true
+	local owns = askOwnsPass(player)
+	if owns ~= nil then
+		setPass(player, owns)
 	end
-	if player.Parent ~= Players then
+end
+
+-- The prompt can close without a sale and the pass still be theirs: Roblox didn't report the purchase
+-- back, or they already had it and the check as they joined never got an answer. So it's asked again
+-- rather than waiting for them to rejoin
+local function onPassPromptFinished(player: Player, passId: number, purchased: boolean)
+	if passId ~= GamePasses.PaidSlots or passOwners[player] then
 		return
 	end
-
-	-- They may have bought it while it was being checked
-	passOwners[player] = passOwners[player] or owns
-	local place = PlaceService.GetPlace(player)
-	if place then
-		refreshPlace(place)
+	if purchased then
+		setPass(player, true)
+	else
+		checkPass(player)
 	end
 end
 
@@ -642,11 +660,7 @@ function SlotService.Start()
 		passOwners[player] = nil
 		lastEquipBestTimes[player] = nil
 	end)
-	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, purchased)
-		if purchased and passId == GamePasses.PaidSlots then
-			givePass(player)
-		end
-	end)
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(onPassPromptFinished)
 
 	shareFloorMarkers(Places.GetAll())
 	for _, place in Places.GetAll() do

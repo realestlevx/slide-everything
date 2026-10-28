@@ -153,6 +153,13 @@ function SignUpgrades.GetValue(name: string, level: number): number
 	return levels[math.clamp(level, 1, #levels)].Value
 end
 
+-- The luck a player's rolls are at: what they've turned it down to with the settings menu's slider,
+-- or with nothing set, all their Luck upgrade gives at this level. Never past that
+function SignUpgrades.GetLuck(level: number, chosen: number?): number
+	local most = SignUpgrades.GetValue("Luck", level)
+	return math.clamp(chosen or most, 1, most)
+end
+
 -- What the next level costs, or nil at the top level
 function SignUpgrades.GetNextPrice(name: string, level: number): number?
 	local nextLevel = getLevels(name)[level + 1]

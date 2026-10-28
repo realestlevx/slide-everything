@@ -140,7 +140,7 @@ local function onRollTriggered(place: Folder, player: Player)
 	rollTokens[place] = token
 	rolling[place] = true
 
-	local luck = SignUpgradeService.GetValue(player, "Luck")
+	local luck = SignUpgradeService.GetLuck(player)
 	local picks: { [number]: Items.Item } = {}
 	local pickIds: { [string]: string } = {} -- Text keys, so the remote and the save keep them
 	for _, number in getRollStands(place) do

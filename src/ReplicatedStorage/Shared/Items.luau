@@ -18,7 +18,8 @@ export type Item = {
 	MoneyPerSecond: number, -- Earned every second while the item sits in a slot
 	BaseMoneyPerStud: number,
 	-- Part in ReplicatedStorage.Items, which collides as a box: a MeshPart, or an invisible box with
-	-- the item's meshes and effects inside it (see ItemModel)
+	-- the item's meshes and effects inside it (see ItemModel). An Attachment named Grip in it is
+	-- where the hand holds it (see InventoryService)
 	MeshName: string,
 }
 

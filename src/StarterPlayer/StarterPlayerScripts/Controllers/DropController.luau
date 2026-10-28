@@ -205,6 +205,7 @@ type Drop = {
 	-- for when it closes again
 	Openings: { [BasePart]: boolean },
 	Items: { DroppedItem },
+	ByPart: { [BasePart]: DroppedItem }, -- Every part of each item, for the walls it touches
 	StartedAt: number,
 	EndsAt: number, -- When its time's up, from the owner's Sliding Time upgrade
 	StartY: number,
@@ -232,6 +233,10 @@ type Drop = {
 
 local drop: Drop? = nil
 local lastDropAt = -math.huge
+-- Every barrier of each kind loaded now; they stream in and out. Kept as they come and go, since
+-- looking through all of Workspace for them as a drop starts held up that frame
+local loadedBarriers: { [BasePart]: boolean } = {}
+local loadedItemBarriers: { [BasePart]: boolean } = {}
 
 -- The camera eases from where it is and looks toward its goals every frame, so it never jumps
 local cameraHeld = false -- Following the items, or still gliding back afterwards
@@ -416,20 +421,28 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		Steerable = false,
 		Done = false,
 	}
-	-- Walls are touched where this client shows them, as they glide across the slide. The wall pops
-	-- before the rest go up, so its copy keeps what the item went through
 	for _, part in parts do
-		part.Touched:Connect(function(hit)
-			if not dropped.Done and not dropped.TouchedWalls[hit] and Drops.IsWall(hit) then
-				dropped.TouchedWalls[hit] = true
-				Drops.AddWall(dropped.Gates, hit, current.Start, current.Direction, current.Slide)
-				MultiplierWallController.Pop(hit)
-				showHits(current)
-			end
-		end)
+		current.ByPart[part] = dropped
 	end
 	copy.Parent = workspace
 	table.insert(current.Items, dropped)
+end
+
+-- Walls are touched where this client shows them, as they glide across the slide. The wall pops
+-- before the rest go up, so its copy keeps what the item went through
+local function onWallTouched(wall: BasePart, hit: BasePart)
+	local current = drop
+	if not current then
+		return
+	end
+	local dropped = current.ByPart[hit]
+	if not dropped or dropped.Done or dropped.TouchedWalls[wall] then
+		return
+	end
+	dropped.TouchedWalls[wall] = true
+	Drops.AddWall(dropped.Gates, wall, current.Start, current.Direction, current.Slide)
+	MultiplierWallController.Pop(wall)
+	showHits(current)
 end
 
 -- The character is anchored through the drop, so the steering keys don't walk it off. Anchored on
@@ -866,12 +879,11 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	end
 	local barriers: { BasePart } = {}
 	local itemBarriers: { BasePart } = {}
-	for _, descendant in workspace:GetDescendants() do
-		if descendant.Name == BARRIER_NAME and descendant:IsA("BasePart") then
-			table.insert(barriers, descendant)
-		elseif descendant.Name == ITEM_BARRIER_NAME and descendant:IsA("BasePart") then
-			table.insert(itemBarriers, descendant)
-		end
+	for barrier in loadedBarriers do
+		table.insert(barriers, barrier)
+	end
+	for barrier in loadedItemBarriers do
+		table.insert(itemBarriers, barrier)
 	end
 
 	local speed = getUpgrade(place, "SlideSpeed")
@@ -894,6 +906,7 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Floor = floor,
 		Openings = openings,
 		Items = {},
+		ByPart = {},
 		StartedAt = now,
 		EndsAt = now + getUpgrade(place, "SlideTime"),
 		StartY = startY,
@@ -946,7 +959,27 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	holdCamera()
 end
 
+local function trackBarrier(instance: Instance)
+	if not instance:IsA("BasePart") then
+		return
+	end
+	if instance.Name == BARRIER_NAME then
+		loadedBarriers[instance] = true
+	elseif instance.Name == ITEM_BARRIER_NAME then
+		loadedItemBarriers[instance] = true
+	end
+end
+
 function DropController.Start()
+	for _, descendant in workspace:GetDescendants() do
+		trackBarrier(descendant)
+	end
+	workspace.DescendantAdded:Connect(trackBarrier)
+	workspace.DescendantRemoving:Connect(function(descendant)
+		loadedBarriers[descendant :: any] = nil
+		loadedItemBarriers[descendant :: any] = nil
+	end)
+	MultiplierWallController.Touched:Connect(onWallTouched)
 	ProximityPromptService.PromptTriggered:Connect(function(prompt)
 		local place = Places.Find(prompt)
 		if place and prompt:FindFirstAncestor(DROP_BUTTON_NAME) then

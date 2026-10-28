@@ -18,7 +18,7 @@ local COUNT_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirectio
 
 -- Collected cash pops out of the middle of the screen as bills, one as each of its items reaches
 -- the player, which then fly into the cash counter. Each one counts its share onto the counter and
--- makes it grow a little. Found gems do the same into the gem counter
+-- makes it grow a little. Gems found by those items pop out the same way, into the gem counter
 local POP_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local POP_MIN_SPREAD = 0.08 -- Share of the screen's height a bill pops out from the middle, at least
 local POP_MAX_SPREAD = 0.2 -- And at most
@@ -30,13 +30,6 @@ local PULSE_SHRINK_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.Easing
 -- Seconds held cash or gems wait to be popped out before they go onto the counter anyway, so the
 -- counter can't stay short if the collect never finishes here
 local HOLD_TIMEOUT = 10
-
--- Gems found by a collect come in after its cash, a gem at a time, up to MAX_GEM_POPS of them that
--- share out what was found. They wait a moment first, as the collect's cash can get here just after
--- the gems do
-local GEM_WAIT = 0.3 -- Seconds
-local MAX_GEM_POPS = 5
-local GEM_POP_GAP = 0.08 -- Seconds between one gem popping out and the next
 
 type Counter = {
 	Attribute: string, -- The player attribute the server keeps the real amount in
@@ -53,8 +46,6 @@ type Counter = {
 	Flying: number,
 	Holds: number, -- Counts every hold, so a hold's timeout can tell a later one has taken over
 }
-
-local lastGems: number? = nil -- The player's gems when last seen, so gems found can be told apart
 
 local CurrencyController = {}
 
@@ -261,31 +252,6 @@ local function hold(counter: Counter, amount: number)
 	end)
 end
 
--- Gems found wait for any collected cash to land first, then pop out a gem at a time
-local function popGems(found: number)
-	local waited = task.wait(GEM_WAIT)
-	while (cashCounter.Waiting > 0 or cashCounter.Flying > 0) and waited < HOLD_TIMEOUT do
-		waited += task.wait()
-	end
-	for left = math.clamp(found, 1, MAX_GEM_POPS), 1, -1 do
-		pop(gemCounter, 1 / left)
-		task.wait(GEM_POP_GAP)
-	end
-end
-
--- Gems going up have been found, so they fly in. The first amount is the player's data loading
-local function onGemsChanged()
-	local gems = LocalPlayer:GetAttribute("Gems")
-	local last = lastGems
-	lastGems = if typeof(gems) == "number" then gems else nil
-	if typeof(gems) == "number" and last and gems > last then
-		hold(gemCounter, gems - last)
-		task.spawn(popGems, gems - last)
-	else
-		update(gemCounter)
-	end
-end
-
 -- Collected cash is kept off the counter until PopCash shows it flying in, so the counter doesn't
 -- jump while the collected items are still on their way to the player
 function CurrencyController.HoldCash(amount: number)
@@ -296,6 +262,18 @@ end
 -- the counter. 1 pops all that's left
 function CurrencyController.PopCash(share: number)
 	pop(cashCounter, share)
+end
+
+-- Gems found by collected items are kept off the counter the same way, until PopGems shows them
+-- flying in as the items that found them reach the player
+function CurrencyController.HoldGems(amount: number)
+	hold(gemCounter, amount)
+end
+
+-- A share of the held gems, 0 to 1, pops out of the middle of the screen as a gem that flies into
+-- the counter. 1 pops all that's left
+function CurrencyController.PopGems(share: number)
+	pop(gemCounter, share)
 end
 
 -- The gui is made again on every respawn, so its labels are picked up again each time. The Cash
@@ -318,9 +296,11 @@ function CurrencyController.Start()
 	LocalPlayer:GetAttributeChangedSignal("Money"):Connect(function()
 		update(cashCounter)
 	end)
-	LocalPlayer:GetAttributeChangedSignal("Gems"):Connect(onGemsChanged)
+	LocalPlayer:GetAttributeChangedSignal("Gems"):Connect(function()
+		update(gemCounter)
+	end)
 	update(cashCounter)
-	onGemsChanged()
+	update(gemCounter)
 
 	PlayerGui.ChildAdded:Connect(function(child)
 		if child.Name == GUI_NAME then

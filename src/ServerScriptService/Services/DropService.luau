@@ -13,6 +13,7 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 local SignUpgradeService = require(script.Parent.SignUpgradeService)
 
 local DropResult = ReplicatedStorage.Remotes.DropResult
+local GemsFound = ReplicatedStorage.Remotes.GemsFound
 
 local DROP_BUTTON_NAME = "Drop_Button" -- Model in a place holding the prompt that drops its items
 local COLLECT_NAME = "Collect" -- Model in a place with the collect pad and its prompt
@@ -43,10 +44,12 @@ type Drop = {
 	-- Down the place's slide, nearest first, at the owner's Slide upgrade when it started
 	Walls: { Drops.Wall },
 	Items: { [string]: DroppedItem }, -- Slot key -> what was in it
-	GemChanceUsed: boolean, -- A collect has had its chance of finding gems for this drop
+	FindsGems: boolean, -- Its items each get a chance of finding gems once collected (see onDrop)
 }
 
 local drops: { [Player]: Drop } = {} -- Each player's latest drop
+local gemDrops: { [Player]: Drop } = {} -- Each player's latest drop whose items find gems
+local gemChances: { [Player]: number } = {} -- Items on the collect pad that get a chance of finding gems
 local walls: { [BasePart]: boolean } = {} -- Every multiplier wall
 local rng = Random.new()
 
@@ -96,14 +99,24 @@ local function onDrop(place: Folder, player: Player)
 			Drops.AddWall(slideWalls, wall, start, direction, slide)
 		end
 	end
-	drops[player] = {
+	-- A drop can be ended early, and starting the next one straight after would find gems far more
+	-- often than drops that run their full time. So a drop's items find gems only once the last drop
+	-- whose items did has had its full time. The client's clock runs a little ahead, as with the
+	-- cooldown. Drops shorter than the cooldown always do, as none can come sooner anyway
+	local lastGemDrop = gemDrops[player]
+	local drop: Drop = {
 		StartedAt = os.clock(),
 		Speed = SignUpgradeService.GetValue(player, "SlideSpeed"),
 		Time = SignUpgradeService.GetValue(player, "SlideTime"),
 		Walls = slideWalls,
 		Items = dropped,
-		GemChanceUsed = false,
+		FindsGems = not lastGemDrop
+			or os.clock() - lastGemDrop.StartedAt >= lastGemDrop.Time - COOLDOWN_SLACK,
 	}
+	drops[player] = drop
+	if drop.FindsGems then
+		gemDrops[player] = drop
+	end
 end
 
 -- The walls down the slide that the client says an item touched, nearest first, each once. Only
@@ -153,6 +166,9 @@ local function onResult(player: Player, slotKey: any, distance: any, alongs: any
 	local paidDistance = Drops.Measure(getGates(drop, alongs), reached)
 	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.Speed)
 	data.CollectCash += pay
+	if drop.FindsGems then
+		gemChances[player] = (gemChances[player] or 0) + 1
+	end
 	table.insert(data.CollectItems, dropped.Item.Id)
 	while #data.CollectItems > Drops.MAX_PILE do
 		table.remove(data.CollectItems, 1)
@@ -163,23 +179,25 @@ local function onResult(player: Player, slotKey: any, distance: any, alongs: any
 	end
 end
 
--- A collect may find gems, more the more the player earns (see Gems). Only one collect a drop gets
--- the chance, once the drop's time is up: a drop can be ended early, and collecting straight after
--- each would find gems far more often than drops that run their full time. The client's clock runs
--- a little ahead, as with the cooldown
+-- Each collected item that gets a chance may find gems, more the more the player earns (see Gems).
+-- The player's client pops a gem out of them for each item that found some as it flies into them
 local function findGems(player: Player, data: PlayerDataService.Data)
-	local drop = drops[player]
-	if not drop or drop.GemChanceUsed or os.clock() - drop.StartedAt < drop.Time - COOLDOWN_SLACK then
-		return
+	local found = 0
+	for _ = 1, gemChances[player] or 0 do
+		if rng:NextNumber() < Gems.COLLECT_CHANCE then
+			found += 1
+		end
 	end
-	drop.GemChanceUsed = true
-	if rng:NextNumber() < Gems.COLLECT_CHANCE then
-		PlayerDataService.AddGems(player, Gems.GetFind(data.MoneyPerSecond))
+	gemChances[player] = 0
+	if found > 0 then
+		local gems = found * Gems.GetFind(data.MoneyPerSecond)
+		PlayerDataService.AddGems(player, gems)
+		GemsFound:FireClient(player, found, gems)
 	end
 end
 
--- The collect pad's prompt: everything waiting there goes into the player's money, and it may find
--- them some gems
+-- The collect pad's prompt: everything waiting there goes into the player's money, and its items
+-- may find them some gems
 local function onCollect(place: Folder, player: Player)
 	local data = PlayerDataService.Get(player)
 	if place:GetAttribute("OwnerUserId") ~= player.UserId or not data then
@@ -244,6 +262,9 @@ function DropService.Start()
 	end
 
 	PlayerDataService.Loaded:Connect(function(player)
+		-- Items left on the pad last time still get their chance
+		local data = PlayerDataService.Get(player)
+		gemChances[player] = if data then #data.CollectItems else 0
 		local place = PlaceService.GetPlace(player)
 		if place then
 			updatePlace(place)
@@ -253,6 +274,8 @@ function DropService.Start()
 	DropResult.OnServerEvent:Connect(onResult)
 	Players.PlayerRemoving:Connect(function(player)
 		drops[player] = nil
+		gemDrops[player] = nil
+		gemChances[player] = nil
 	end)
 end
 

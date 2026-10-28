@@ -11,7 +11,9 @@ local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
 
 local CurrencyController = require(script.Parent.CurrencyController)
+local PromptController = require(script.Parent.PromptController)
 
+local GemsFound = ReplicatedStorage.Remotes.GemsFound
 local LocalPlayer = Players.LocalPlayer
 
 local BILLBOARD_NAME = "Collect_Gui" -- On a place's collect pad, with an Amount label for the uncollected cash
@@ -39,9 +41,16 @@ local MIN_SCALE = 0.02 -- Parts can't shrink to nothing
 local TICK_PITCH_STEP = 0.02
 local MAX_TICK_PITCH = 1.6
 local MAX_TICK_SOUNDS = 8 -- Ticks heard at once; past this the oldest is cut short
+-- Each gem a collect finds pops out of the player as one of its items reaches them. The emptied
+-- stack can get here just after the gems do, so they wait up to this long for its items to set off
+local GEM_WAIT = 0.3 -- Seconds
 
 type StackItem = {
 	Part: BasePart, -- The item's outer part, with any others welded inside
+}
+
+type Flight = {
+	Gems: number, -- Finds it pops out as it reaches the player
 }
 
 -- Every place's stack is made on this client. The server keeps what's in each, and says so with
@@ -54,7 +63,11 @@ local synced: { [Folder]: number } = {} -- Other places -> how many of their Col
 -- The pad streams out while the player is far down the slide, so items that finish then wait here
 -- and are stacked once it's back
 local pending: { [Folder]: { Items.Item } } = {}
-local itemsFlying = 0 -- Collected items still on their way into the player
+-- Goes up each time a place's stack is emptied, by a collect or a new owner. A saved stack being put
+-- back stops once it changes, so the rest of it isn't stacked after the pad's been emptied
+local emptied: { [Folder]: number } = {}
+local flights: { Flight } = {} -- Collected items still on their way into the player
+local gemsLeft = 0 -- Gems found by collected items that haven't popped out yet
 local lastCash: { [Folder]: number } = {} -- Each place's CollectCash when it was last seen
 local tickSounds: { Sound } = {} -- Ticks still playing, oldest first
 
@@ -211,8 +224,16 @@ local function getRoot(): BasePart?
 	return if root and root:IsA("BasePart") then root else nil
 end
 
+-- One of the gems found pops out, with its share of what they found
+local function popGem()
+	if gemsLeft > 0 then
+		CurrencyController.PopGems(1 / gemsLeft)
+		gemsLeft -= 1
+	end
+end
+
 -- Up off the stack, then into the player while shrinking. It follows the player if they move
-local function flyToPlayer(stackItem: StackItem, startDelay: number, pitch: number)
+local function flyToPlayer(stackItem: StackItem, flight: Flight, startDelay: number, pitch: number)
 	local part = stackItem.Part
 	-- Off the stack now, so nothing lands on or touches it
 	ItemModel.SetVisualOnly(part)
@@ -237,24 +258,33 @@ local function flyToPlayer(stackItem: StackItem, startDelay: number, pitch: numb
 	progress:Destroy()
 	playTick(pitch)
 
-	-- Each item brings its share of the collected cash in as a bill, and the last brings the rest
-	CurrencyController.PopCash(1 / itemsFlying)
-	itemsFlying -= 1
+	-- Each item brings its share of the collected cash in as a bill, and the last brings the rest.
+	-- A gem pops out with it for each find it made
+	CurrencyController.PopCash(1 / #flights)
+	local index = table.find(flights, flight)
+	if index then
+		table.remove(flights, index)
+	end
+	for _ = 1, flight.Gems do
+		popGem()
+	end
 end
 
 local function collectStack(place: Folder)
 	local stack = getStack(place)
 	playSound("Collect")
-	itemsFlying += #stack
 	local startDelay, gap, pitch = 0, FIRST_GAP, 1
 	for index = #stack, 1, -1 do
-		task.spawn(flyToPlayer, stack[index], startDelay, pitch)
+		local flight: Flight = { Gems = 0 }
+		table.insert(flights, flight)
+		task.spawn(flyToPlayer, stack[index], flight, startDelay, pitch)
 		startDelay += gap
 		gap = math.max(gap * GAP_SHRINK, MIN_GAP)
 		pitch = math.min(pitch + TICK_PITCH_STEP, MAX_TICK_PITCH)
 	end
 	table.clear(stack)
 	pending[place] = nil
+	emptied[place] = (emptied[place] or 0) + 1
 end
 
 local function clearStack(place: Folder)
@@ -265,6 +295,7 @@ local function clearStack(place: Folder)
 	table.clear(stack)
 	synced[place] = nil
 	pending[place] = nil
+	emptied[place] = (emptied[place] or 0) + 1
 end
 
 local function getSavedIds(place: Folder): { string }
@@ -312,7 +343,12 @@ local function onStackChanged(place: Folder)
 	if stackPlace ~= place then
 		stackPlace = place
 		clearStack(place)
+		local emptiedAt = emptied[place]
 		for _, id in getSavedIds(place) do
+			-- Collected, or the place changed hands, before it was all back: the rest went with it
+			if emptied[place] ~= emptiedAt then
+				break
+			end
 			local item = Items[id]
 			if item then
 				CollectController.AddToPile(place, item)
@@ -335,6 +371,16 @@ local function showCash(place: Folder)
 	end
 end
 
+-- The collect prompt is only up while there's cash on the pad to collect
+local function updatePrompt(place: Folder)
+	local collect = place:FindFirstChild(COLLECT_NAME)
+	local prompt = collect and collect:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if prompt then
+		local cash = place:GetAttribute("CollectCash")
+		PromptController.SetHidden(place, prompt, not (typeof(cash) == "number" and cash > 0))
+	end
+end
+
 -- Cash going down on the player's own pad has been collected. It's kept off their cash counter
 -- and pops out onto it a bill at a time, as its items fly into them
 local function onCashChanged(place: Folder)
@@ -347,24 +393,56 @@ local function onCashChanged(place: Folder)
 	CurrencyController.HoldCash(last - cash)
 	-- Items still in the stack are about to fly, once the emptied CollectItems arrives. With none
 	-- at all, it pops out in one go
-	if itemsFlying == 0 and #getStack(place) == 0 then
+	if #flights == 0 and #getStack(place) == 0 then
 		CurrencyController.PopCash(1)
+	end
+end
+
+-- Gems found by a collect each go to one of its items still on their way in, a different one for
+-- each while there are enough, picked at random. With none on their way, they pop out at once
+local function onGemsFound(found: any, gems: any)
+	if not (typeof(found) == "number" and typeof(gems) == "number" and found >= 1) then
+		return
+	end
+	CurrencyController.HoldGems(gems)
+	gemsLeft += found
+	local waited = 0
+	while #flights == 0 and waited < GEM_WAIT do
+		waited += task.wait()
+	end
+	if #flights == 0 then
+		for _ = 1, found do
+			popGem()
+		end
+		return
+	end
+	local unpicked: { Flight } = {}
+	for _ = 1, found do
+		if #unpicked == 0 then
+			unpicked = table.clone(flights)
+		end
+		local flight = table.remove(unpicked, math.random(#unpicked)) :: Flight
+		flight.Gems += 1
 	end
 end
 
 function CollectController.Start()
 	for _, place in Places.GetAll() do
 		showCash(place)
+		updatePrompt(place)
 		local cash = place:GetAttribute("CollectCash")
 		lastCash[place] = if typeof(cash) == "number" then cash else nil
 		place:GetAttributeChangedSignal("CollectCash"):Connect(function()
 			showCash(place)
+			updatePrompt(place)
 			onCashChanged(place)
 		end)
-		-- The pad is streamed, so its billboard and stack part can arrive after the attributes
+		-- The pad is streamed, so its billboard, prompt and stack part can arrive after the attributes
 		place.DescendantAdded:Connect(function(descendant)
 			if descendant.Name == BILLBOARD_NAME then
 				showCash(place)
+			elseif descendant:IsA("ProximityPrompt") then
+				updatePrompt(place)
 			elseif descendant.Name == STACK_PART_NAME then
 				if isOwn(place) then
 					addPending(place)
@@ -390,6 +468,7 @@ function CollectController.Start()
 			onStackChanged(place)
 		end)
 	end
+	GemsFound.OnClientEvent:Connect(onGemsFound)
 end
 
 return CollectController

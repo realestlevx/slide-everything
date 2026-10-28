@@ -19,7 +19,13 @@ local MoveHotbarItem = ReplicatedStorage.Remotes.MoveHotbarItem
 local DeleteItems = ReplicatedStorage.Remotes.DeleteItems
 
 local HELD_NAME = "HeldItem"
-local HELD_GAP = 0.3 -- Studs from the hand's grip to the back of the item, so the hand isn't inside it
+-- Studs from the hand's grip to the back of an item held out in front of it. The grip is where the
+-- hand closes, so at 0 the hand holds the item's edge
+local HELD_GAP = 0
+-- Attachment in an item in ReplicatedStorage.Items where the hand holds it, like a gun's handle. Its
+-- front (LookVector) points the way the player faces and its top stays up. Items without one are
+-- held out in front of the hand instead
+local HELD_GRIP_NAME = "Grip"
 -- BillboardGui in ReplicatedStorage shown over the held item, if there is one
 local HELD_BILLBOARD_NAME = "HeldItemBillboard"
 
@@ -237,8 +243,9 @@ local function updateHeldItem(player: Player)
 		return
 	end
 
-	-- Turned with the character, like an item on its roll stand. As big as it shows in a slot at its
-	-- level (see Upgrades.GetSize); it's only upgraded in a slot, so that can't change while it's held
+	-- Turned with the character, like an item on its roll stand, unless it has a grip to be held by.
+	-- As big as it shows in a slot at its level (see Upgrades.GetSize); it's only upgraded in a slot,
+	-- so that can't change while it's held
 	local held = Rolling.CreateDisplay(item, root)
 	local turn = root.CFrame.Rotation:ToObjectSpace(held.CFrame.Rotation)
 	held.Name = HELD_NAME
@@ -246,16 +253,23 @@ local function updateHeldItem(player: Player)
 	held.Massless = true
 	held.Anchored = false
 
-	-- How far the item reaches towards the character's front from its center, however it's turned
-	local front = turn:VectorToObjectSpace(Vector3.new(0, 0, -1))
-	local halfDepth = (math.abs(front.X) * held.Size.X + math.abs(front.Y) * held.Size.Y + math.abs(front.Z) * held.Size.Z) / 2
-
-	-- Out in front of the hand's grip, so it follows the arm. Undoing GripTurn lines the grip up with
-	-- the character, so -Z there is the character's front
+	-- Welded to the hand's grip, so it follows the arm. Undoing GripTurn lines the grip up with the
+	-- character, so -Z there is the character's front
+	local hand = grip.CFrame * pose.GripTurn:Inverse()
 	local weld = Instance.new("Weld")
 	weld.Part0 = grip.Parent :: BasePart
 	weld.Part1 = held
-	weld.C0 = grip.CFrame * pose.GripTurn:Inverse() * CFrame.new(0, 0, -(HELD_GAP + halfDepth)) * turn
+	local itemGrip = held:FindFirstChild(HELD_GRIP_NAME)
+	if itemGrip and itemGrip:IsA("Attachment") then
+		-- In the hand by its grip, which has grown with the item
+		weld.C0 = hand
+		weld.C1 = itemGrip.CFrame
+	else
+		-- How far the item reaches towards the character's front from its center, however it's turned
+		local front = turn:VectorToObjectSpace(Vector3.new(0, 0, -1))
+		local halfDepth = (math.abs(front.X) * held.Size.X + math.abs(front.Y) * held.Size.Y + math.abs(front.Z) * held.Size.Z) / 2
+		weld.C0 = hand * CFrame.new(0, 0, -(HELD_GAP + halfDepth)) * turn
+	end
 	weld.Parent = held
 
 	local billboardTemplate = ReplicatedStorage:FindFirstChild(HELD_BILLBOARD_NAME)
@@ -279,8 +293,8 @@ function InventoryService.EnsureCanStart(player: Player)
 	if not (data and #data.Inventory == 0) then
 		return
 	end
-	-- At their own luck, which takes the commoner items out of the rolls as it grows
-	local cheapest = Rolling.GetCheapestPrice(SignUpgrades.GetValue("Luck", data.UpgradeLevels.Luck or 1))
+	-- At the luck they roll at, which takes the commoner items out of the rolls as it grows
+	local cheapest = Rolling.GetCheapestPrice(SignUpgrades.GetLuck(data.UpgradeLevels.Luck or 1, data.Luck))
 	if data.Money < cheapest then
 		PlayerDataService.SetMoney(player, cheapest)
 	end

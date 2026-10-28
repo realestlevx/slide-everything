@@ -10,6 +10,7 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local BuyUpgrade = ReplicatedStorage.Remotes.BuyUpgrade
 local BuyUpgradeResult = ReplicatedStorage.Remotes.BuyUpgradeResult
+local SetLuck = ReplicatedStorage.Remotes.SetLuck
 
 -- The client holds its button for the whole cooldown; this only catches requests sent around it.
 -- A little short of the cooldown, since the client measures it on its own clock
@@ -27,6 +28,39 @@ end
 function SignUpgradeService.GetValue(player: Player, name: string): number
 	local data = PlayerDataService.Get(player)
 	return SignUpgrades.GetValue(name, if data then getLevel(data, name) else 1)
+end
+
+-- The luck the player's rolls are at, which they can turn down from what their Luck upgrade gives
+-- with the settings menu's slider. 1 while their data loads
+function SignUpgradeService.GetLuck(player: Player): number
+	local data = PlayerDataService.Get(player)
+	return if data then SignUpgrades.GetLuck(getLevel(data, "Luck"), data.Luck) else 1
+end
+
+-- Their client's slider shows it out of the most their upgrade gives, from the player's Luck and
+-- MaxLuck attributes. The most goes first, so the luck never reaches the client past it
+local function updateLuck(player: Player)
+	local data = PlayerDataService.Get(player)
+	if not data then
+		return
+	end
+	local level = getLevel(data, "Luck")
+	player:SetAttribute("MaxLuck", SignUpgrades.GetValue("Luck", level))
+	player:SetAttribute("Luck", SignUpgrades.GetLuck(level, data.Luck))
+end
+
+-- The settings menu's luck slider, sent once it's let go
+local function onSetLuck(player: Player, luck: any)
+	local data = PlayerDataService.Get(player)
+	-- NaN fails the comparison, so it's turned away too
+	if not (data and typeof(luck) == "number" and luck >= 1) then
+		return
+	end
+	-- All the way up is kept as nothing set, so it goes on following the upgrade
+	data.Luck = if luck < SignUpgrades.GetValue("Luck", getLevel(data, "Luck")) then luck else nil
+	updateLuck(player)
+	-- Turning it up takes the cheapest items back out of the rolls
+	InventoryService.EnsureCanStart(player)
 end
 
 -- A place's signs show its owner's levels, from <Name>Level attributes on the place: the sign parts
@@ -75,6 +109,11 @@ local function onBuy(player: Player, place: any, name: any)
 	-- stand is its own purchase, and can shrink it to grow, before the stand reaches it
 	BuyUpgradeResult:FireClient(player, name, true, level + 1)
 	place:SetAttribute(`{name}Level`, level + 1)
+	if name == "Luck" then
+		-- Buying more turns the slider all the way up to it, wherever it was
+		data.Luck = nil
+		updateLuck(player)
+	end
 	-- Same as for slots, and more luck takes the cheapest items out of the rolls
 	InventoryService.EnsureCanStart(player)
 end
@@ -92,9 +131,11 @@ function SignUpgradeService.Start()
 		if place then
 			updatePlace(place)
 		end
+		updateLuck(player)
 	end)
 
 	BuyUpgrade.OnServerEvent:Connect(onBuy)
+	SetLuck.OnServerEvent:Connect(onSetLuck)
 	Players.PlayerRemoving:Connect(function(player)
 		lastBuys[player] = nil
 	end)

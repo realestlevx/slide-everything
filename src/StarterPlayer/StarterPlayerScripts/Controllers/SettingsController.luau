@@ -11,6 +11,7 @@ local Volumes = require(ReplicatedStorage.Shared.Volumes)
 local ButtonController = require(script.Parent.ButtonController)
 local HudController = require(script.Parent.HudController)
 
+local SetLuck = ReplicatedStorage.Remotes.SetLuck
 local SetVolume = ReplicatedStorage.Remotes.SetVolume
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -34,24 +35,39 @@ local EFFECTS_OUT_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingD
 local FOV_STEP_NAME = "SettingsFov"
 
 -- Volume name (see Volumes) -> its row in the Settings gui's Holder, which has its slider
-local ROWS = {
+local VOLUME_ROWS = {
 	Sfx = "Sound",
 	Music = "Music",
 }
+-- The row whose slider sets the luck the player's rolls are at, from 1 up to the most their Luck
+-- upgrade gives. The label on its bar shows both, like "30/50 Luck"
+local LUCK_ROW = "Luck"
+local VALUE_LABEL_NAME = "Value"
 
+-- A knob dragged along the bar of one of the gui's rows
 type Slider = {
+	Row: string, -- Its row in the gui's Holder
+	Fraction: number, -- How far along the bar the knob is, 0 to 1
+	Text: string?, -- Shown on the bar's Value label. Nil for a row without one
+	-- Dragged this far along the bar, which moves the knob there or as near as it goes
+	OnSlide: (fraction: number) -> (),
+	OnRelease: () -> (), -- Let go, so where it's at can be kept
+	-- Parts of its row, found again each time the gui's remade
+	Track: GuiObject?, -- The row's Scroller, which the slider runs along
+	Fill: GuiObject?,
+	Knob: GuiObject?,
+	Label: TextLabel?,
+}
+
+type Volume = {
 	Name: string, -- See Volumes
 	Group: SoundGroup?,
 	-- The group's Volume as set in Studio. The slider sets it as a share of this, so all the way up
 	-- it sounds as it was mixed
 	MixedVolume: number,
-	Volume: number, -- Where the slider is, 0 to 1
 	-- Set once the player moves it, so their saved volume reaching the client late can't move it back
 	Changed: boolean,
-	-- Parts of its row, found again each time the gui's remade
-	Track: GuiObject?, -- The row's Scroller, which the slider runs along
-	Fill: GuiObject?,
-	Knob: GuiObject?,
+	Slider: Slider, -- Its Fraction is the volume
 }
 
 local SettingsController = {}
@@ -71,7 +87,7 @@ local widenedCamera: Camera? = nil
 local unwidenedFov = 0
 local widenedFov = 0
 
-local sliders: { [string]: Slider } = {}
+local sliders: { Slider } = {}
 local press: InputObject? = nil -- The click or touch dragging a slider
 local pressed: Slider? = nil -- The slider it's dragging
 
@@ -85,23 +101,39 @@ local function isSameInput(a: InputObject, b: InputObject): boolean
 end
 
 local function render(slider: Slider)
-	local fill, knob = slider.Fill, slider.Knob
+	local fill, knob, label = slider.Fill, slider.Knob, slider.Label
 	if fill then
-		fill.Size = UDim2.new(UDim.new(slider.Volume, 0), fill.Size.Y)
+		fill.Size = UDim2.new(UDim.new(slider.Fraction, 0), fill.Size.Y)
 		-- Its outline would still show as a sliver at nothing
-		fill.Visible = slider.Volume > 0
+		fill.Visible = slider.Fraction > 0
 	end
 	if knob then
-		knob.Position = UDim2.new(UDim.new(slider.Volume, 0), knob.Position.Y)
+		knob.Position = UDim2.new(UDim.new(slider.Fraction, 0), knob.Position.Y)
+	end
+	if label and slider.Text then
+		label.Text = slider.Text
 	end
 end
 
-local function setVolume(slider: Slider, volume: number)
-	slider.Volume = volume
-	if slider.Group then
-		slider.Group.Volume = slider.MixedVolume * volume
-	end
-	render(slider)
+local function createSlider(
+	row: string,
+	text: string?,
+	onSlide: (fraction: number) -> (),
+	onRelease: () -> ()
+): Slider
+	local slider: Slider = {
+		Row = row,
+		Fraction = 1,
+		Text = text,
+		OnSlide = onSlide,
+		OnRelease = onRelease,
+		Track = nil,
+		Fill = nil,
+		Knob = nil,
+		Label = nil,
+	}
+	table.insert(sliders, slider)
+	return slider
 end
 
 local function slideTo(slider: Slider, x: number)
@@ -109,8 +141,7 @@ local function slideTo(slider: Slider, x: number)
 	if not (track and track.AbsoluteSize.X > 0) then
 		return
 	end
-	slider.Changed = true
-	setVolume(slider, math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1))
+	slider.OnSlide(math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1))
 end
 
 -- Pressing anywhere on a bar or its knob jumps the slider there and starts dragging it
@@ -145,13 +176,21 @@ local function onPointerReleased(input: InputObject)
 	end
 	press = nil
 	pressed = nil
-	SetVolume:FireServer(slider.Name, slider.Volume)
+	slider.OnRelease()
 end
 
-local function loadSavedVolume(slider: Slider)
-	local saved = LocalPlayer:GetAttribute(`{slider.Name}Volume`)
-	if typeof(saved) == "number" and not slider.Changed then
-		setVolume(slider, saved)
+local function setVolume(volume: Volume, value: number)
+	volume.Slider.Fraction = value
+	if volume.Group then
+		volume.Group.Volume = volume.MixedVolume * value
+	end
+	render(volume.Slider)
+end
+
+local function loadSavedVolume(volume: Volume)
+	local saved = LocalPlayer:GetAttribute(`{volume.Name}Volume`)
+	if typeof(saved) == "number" and not volume.Changed then
+		setVolume(volume, saved)
 	end
 end
 
@@ -231,6 +270,9 @@ local function bindSlider(slider: Slider, row: Instance)
 	slider.Track = track
 	slider.Fill = track:WaitForChild("Fill") :: GuiObject
 	slider.Knob = knob
+	if slider.Text then
+		slider.Label = track:WaitForChild(VALUE_LABEL_NAME) :: TextLabel
+	end
 
 	-- The knob sits centered on the end of the fill
 	knob.AnchorPoint = Vector2.new(0.5, knob.AnchorPoint.Y)
@@ -258,8 +300,8 @@ local function bindGui(gui: Instance)
 	openScale = scale
 	frame.Visible = isOpen
 
-	for name, slider in sliders do
-		task.spawn(bindSlider, slider, holder:WaitForChild(ROWS[name]))
+	for _, slider in sliders do
+		task.spawn(bindSlider, slider, holder:WaitForChild(slider.Row))
 	end
 
 	ButtonController.Animate(exitButton)
@@ -272,15 +314,15 @@ end
 
 -- A sound plays through the group its SoundGroup names rather than the one it's kept in, so every
 -- sound in the group, and every copy of one played there, is pointed at it
-local function bindGroup(slider: Slider)
-	local groupName = Volumes[slider.Name]
+local function bindGroup(volume: Volume)
+	local groupName = Volumes[volume.Name]
 	local group = SoundService:FindFirstChild(groupName)
 	if not (group and group:IsA("SoundGroup")) then
 		warn(`[SettingsController] SoundService.{groupName} should be a SoundGroup`)
 		return
 	end
-	slider.Group = group
-	slider.MixedVolume = group.Volume
+	volume.Group = group
+	volume.MixedVolume = group.Volume
 
 	local function link(descendant: Instance)
 		if descendant:IsA("Sound") then
@@ -291,6 +333,62 @@ local function bindGroup(slider: Slider)
 		link(descendant)
 	end
 	group.DescendantAdded:Connect(link)
+end
+
+local function createVolume(name: string)
+	local volume: Volume
+	volume = {
+		Name = name,
+		Group = nil,
+		MixedVolume = 1,
+		Changed = false,
+		Slider = createSlider(VOLUME_ROWS[name], nil, function(fraction)
+			volume.Changed = true
+			setVolume(volume, fraction)
+		end, function()
+			SetVolume:FireServer(name, volume.Slider.Fraction)
+		end),
+	}
+	bindGroup(volume)
+	LocalPlayer:GetAttributeChangedSignal(`{name}Volume`):Connect(function()
+		loadSavedVolume(volume)
+	end)
+	loadSavedVolume(volume)
+end
+
+-- The luck slider runs from 1 at its left end to the most the player's Luck upgrade gives at its
+-- right, in whole steps, and the rolls are at wherever it's let go
+local function createLuck()
+	local luck, maxLuck = 1, 1
+	local slider: Slider
+
+	local function show()
+		slider.Fraction = if maxLuck > 1 then (luck - 1) / (maxLuck - 1) else 1
+		slider.Text = `{luck}/{maxLuck} Luck`
+		render(slider)
+	end
+
+	-- From the server, which sends back what each let go set it to. Not while it's being dragged,
+	-- so the answer to an earlier let go can't pull it back
+	local function load()
+		local current, most = LocalPlayer:GetAttribute("Luck"), LocalPlayer:GetAttribute("MaxLuck")
+		if pressed ~= slider and typeof(current) == "number" and typeof(most) == "number" then
+			luck, maxLuck = current, most
+			show()
+		end
+	end
+
+	slider = createSlider(LUCK_ROW, "", function(fraction)
+		luck = math.round(1 + fraction * (maxLuck - 1))
+		show()
+	end, function()
+		SetLuck:FireServer(luck)
+	end)
+	show()
+	for _, attribute in { "Luck", "MaxLuck" } do
+		LocalPlayer:GetAttributeChangedSignal(attribute):Connect(load)
+	end
+	load()
 end
 
 -- On the camera, so it's only on this player's screen and out of the way of the stage lighting looks
@@ -321,23 +419,9 @@ end
 
 function SettingsController.Start()
 	for name in Volumes do
-		local slider: Slider = {
-			Name = name,
-			Group = nil,
-			MixedVolume = 1,
-			Volume = 1,
-			Changed = false,
-			Track = nil,
-			Fill = nil,
-			Knob = nil,
-		}
-		sliders[name] = slider
-		bindGroup(slider)
-		LocalPlayer:GetAttributeChangedSignal(`{name}Volume`):Connect(function()
-			loadSavedVolume(slider)
-		end)
-		loadSavedVolume(slider)
+		createVolume(name)
 	end
+	createLuck()
 
 	createBlur()
 	-- After every other camera step, the drop camera's too, and taken off once the frame's drawn
