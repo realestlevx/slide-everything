@@ -2,12 +2,16 @@ local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local DropController = require(script.Parent.DropController)
+
 local LocalPlayer = Players.LocalPlayer
 
 -- The lighting changes with the stage under what the camera's following: the items through a drop,
 -- the player otherwise. Stages are the folders in Workspace.Stages, and a stage's look is picked by its
 -- Name attribute ("Forest"), so every stage with the same name looks the same. Anywhere else, and on
--- stages without a look below, it's the Lighting as it's set in Studio
+-- stages without a look below, it's the Lighting as it's set in Studio. Through a drop, items over
+-- somewhere that isn't a stage, like past the end of the slide, keep the look they had, so it only
+-- goes back once they're all gone or the player exits the drop
 local STAGES_FOLDER = "Stages"
 local STAGE_NAME_ATTRIBUTE = "Name"
 local BLEND_TIME = 1 -- Seconds to ease from one look into the next
@@ -79,24 +83,46 @@ local LOOKS: { [string]: Values } = {
 			TintColor = Color3.fromRGB(236, 242, 220),
 		},
 	},
-	-- Hot and bright: a strong warm sun, shadows lit orange by the sand and a pale heat haze far off
+	-- Dry and hot: a harsh orange sun, shadows lit warm by the sand, colors bleached a little by it and
+	-- a dusty tan haze that swallows the sky far off
 	Dunes = {
 		Lighting = {
-			Brightness = 2.6,
-			Ambient = Color3.fromRGB(40, 28, 14),
-			OutdoorAmbient = Color3.fromRGB(175, 150, 115),
-			ColorShift_Top = Color3.fromRGB(255, 215, 150),
-			ColorShift_Bottom = Color3.fromRGB(45, 25, 8),
-			FogColor = Color3.fromRGB(235, 212, 165),
-			FogStart = 250,
-			FogEnd = 1300,
-			ExposureCompensation = 0.05,
+			Brightness = 2.8,
+			Ambient = Color3.fromRGB(48, 32, 16),
+			OutdoorAmbient = Color3.fromRGB(190, 160, 120),
+			ColorShift_Top = Color3.fromRGB(255, 205, 140),
+			ColorShift_Bottom = Color3.fromRGB(60, 32, 10),
+			FogColor = Color3.fromRGB(232, 205, 160),
+			FogStart = 180,
+			FogEnd = 1100,
+			ExposureCompensation = 0.1,
 		},
 		Correction = {
-			Brightness = 0.01,
-			Contrast = 0.1,
-			Saturation = 0.06,
-			TintColor = Color3.fromRGB(255, 244, 226),
+			Brightness = 0.02,
+			Contrast = 0.08,
+			Saturation = -0.08,
+			TintColor = Color3.fromRGB(255, 236, 205),
+		},
+	},
+	-- Underground: dim daylight, cool blue-violet shadows and a deep indigo haze closing in over the
+	-- sky, so the glowing crystals and their lights stand out while the walls and slide stay clear
+	["Crystal Caves"] = {
+		Lighting = {
+			Brightness = 1,
+			Ambient = Color3.fromRGB(40, 35, 70),
+			OutdoorAmbient = Color3.fromRGB(100, 100, 150),
+			ColorShift_Top = Color3.fromRGB(165, 180, 255),
+			ColorShift_Bottom = Color3.fromRGB(40, 18, 70),
+			FogColor = Color3.fromRGB(28, 26, 54),
+			FogStart = 90,
+			FogEnd = 650,
+			ExposureCompensation = -0.15,
+		},
+		Correction = {
+			Brightness = 0,
+			Contrast = 0.12,
+			Saturation = 0.15,
+			TintColor = Color3.fromRGB(225, 228, 255),
 		},
 	},
 }
@@ -141,9 +167,13 @@ local function lerp(from: any, to: any, alpha: number): any
 	return if typeof(from) == "Color3" then from:Lerp(to, alpha) else from + (to - from) * alpha
 end
 
--- Where the camera's looking: at the items through a drop, while DropController holds the camera and
--- keeps its focus on them, and at the character otherwise
-local function getFollowed(): Vector3
+-- What the camera's following: the items through a drop, nil before they're anywhere yet; where it's
+-- looking while it glides back from one afterwards; and the character otherwise
+local function getFollowed(): Vector3?
+	local dropping, items = DropController.GetDrop()
+	if dropping then
+		return items
+	end
 	local camera = workspace.CurrentCamera
 	local character = LocalPlayer.Character
 	local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
@@ -153,11 +183,11 @@ local function getFollowed(): Vector3
 	return camera.Focus.Position
 end
 
--- The look for the stage underneath, or nil if there's no stage there or no look for it
-local function findLook(position: Vector3): string?
+-- Whether there's a stage underneath, and its look, or nil if it has none
+local function findLook(position: Vector3): (boolean, string?)
 	local stages = workspace:FindFirstChild(STAGES_FOLDER)
 	if not stages then
-		return nil
+		return false, nil
 	end
 	rayParams.FilterDescendantsInstances = { stages }
 	local hit = workspace:Raycast(position + Vector3.yAxis * RAY_LIFT, -Vector3.yAxis * RAY_LENGTH, rayParams)
@@ -166,7 +196,7 @@ local function findLook(position: Vector3): string?
 		stage = stage.Parent
 	end
 	local name = if stage then stage:GetAttribute(STAGE_NAME_ATTRIBUTE) else nil
-	return if typeof(name) == "string" and LOOKS[name] then name else nil
+	return stage ~= nil, if typeof(name) == "string" and LOOKS[name] then name else nil
 end
 
 -- Eases on from wherever it's got to, so changing look partway through never jumps
@@ -185,7 +215,15 @@ local function onHeartbeat(dt: number)
 	sinceCheck += dt
 	if sinceCheck >= CHECK_INTERVAL then
 		sinceCheck = 0
-		setLook(findLook(getFollowed()))
+		local followed = getFollowed()
+		local found, name: string? = false, nil
+		if followed then
+			found, name = findLook(followed)
+		end
+		-- Through a drop, the look's kept anywhere that isn't a stage, like a stage that's streamed out
+		if found or not DropController.GetDrop() then
+			setLook(name)
+		end
 	end
 	if progress >= 1 then
 		return

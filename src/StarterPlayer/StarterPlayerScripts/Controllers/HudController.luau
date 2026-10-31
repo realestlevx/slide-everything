@@ -22,14 +22,21 @@ local EDGE_MARGIN = 0.1 -- Pieces slide this share of their own size past the ed
 
 -- The pieces of the screen that swap while the player's items drop. These are on screen in the drop
 -- view, the multiplier only once it's past 1x; the rest are on screen the rest of the time
-local DROP_VIEW_PIECES =
-	{ Spectate = true, ControlFrame = true, Left = true, Right = true, Time = true, Multiplier = true }
+local DROP_VIEW_PIECES = {
+	Spectate = true,
+	ControlFrame = true,
+	Left = true,
+	Right = true,
+	Time = true,
+	Multiplier = true,
+	ItemCounter = true,
+}
 -- The sequences play side by side, each step once the one before has finished: in this order into
 -- the drop view, and backwards out of it. A menu like Settings plays them backwards too as it opens,
 -- pushing the drop view's pieces out of its way, and in order as it closes. A step's pieces move
 -- together
 local SEQUENCES = {
-	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right", "Time", "Multiplier" } },
+	{ { "Inventory" }, { "ControlFrame" }, { "Left", "Right", "Time", "Multiplier", "ItemCounter" } },
 	{ { "Cash", "Gem" } },
 }
 -- The top bar holds one of these at a time: the base buttons, the button back to the base once the
@@ -56,6 +63,10 @@ local TICK_POP_FADE_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.Easing
 -- second, and so on by turns
 local SLIDING_SOUNDS_NAME = "Sliding"
 local CLOCK_SOUND_NAMES = { "Clock1", "Clock2" }
+-- The item counter shows how many of the drop's items the player still has. Every one they lose pops
+-- a "-1" out of it like the timer's, and its count flashes red and fades back
+local ITEM_FLASH_COLOR = Color3.fromRGB(255, 40, 40)
+local ITEM_FLASH_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Holds the red, then fades
 
 -- The multiplier's colors scroll through the rainbow (see Rainbow)
 -- It shakes harder and grows bigger for every wall the items have passed that multiplies, up to
@@ -130,6 +141,9 @@ local pieces: { [string]: Piece } = {}
 local cashLabel: TextLabel? = nil
 local distanceLabel: TextLabel? = nil
 local timeLabel: TextLabel? = nil
+local itemLabel: TextLabel? = nil -- The item counter's count
+local itemColor = Color3.new(1, 1, 1) -- Its text color as laid out in Studio, which a flash fades back to
+local itemCount = 0
 -- The drop's best multiplier so far, and how many walls that multiply it took to get there
 local multiplier = 1
 local multiplierWalls = 0
@@ -465,14 +479,15 @@ local function anchorAtMiddle(gui: GuiObject)
 	gui.Position += UDim2.fromScale(size.X.Scale * (0.5 - anchor.X), size.Y.Scale * (0.5 - anchor.Y))
 end
 
--- Placed by where the timer's text is on screen, since its aspect ratio keeps it narrower than its frame
-local function popTime(label: TextLabel)
+-- A "-1" out of the label, like the timer's or the item counter's. Placed by where the label is on
+-- screen, since an aspect ratio, like the timer's, can keep it narrower than its frame
+local function popTick(label: TextLabel)
 	local holder = label.Parent :: GuiObject
 	local size = label.AbsoluteSize
 	local center = label.AbsolutePosition + size / 2 - holder.AbsolutePosition
 
 	local pop = Instance.new("TextLabel")
-	pop.Name = "TimePop"
+	pop.Name = "TickPop"
 	pop.BackgroundTransparency = 1
 	pop.Text = TICK_POP_TEXT
 	pop.FontFace = label.FontFace
@@ -530,9 +545,29 @@ function HudController.SetDropTime(seconds: number)
 	if text ~= label.Text then
 		label.Text = text
 		if dropView then
-			popTime(label)
+			popTick(label)
 			playClock()
 		end
+	end
+end
+
+-- How many of the drop's items the player still has. Each one lost pops a "-1" out of the counter,
+-- and its count flashes red
+function HudController.SetDropItems(count: number)
+	local lost = itemCount - count
+	itemCount = count
+	local label = itemLabel
+	if not label then
+		return
+	end
+	label.Text = tostring(count)
+	if lost > 0 and dropView then
+		for _ = 1, lost do
+			popTick(label)
+		end
+		-- Takes over from a flash still fading
+		label.TextColor3 = ITEM_FLASH_COLOR
+		TweenService:Create(label, ITEM_FLASH_INFO, { TextColor3 = itemColor }):Play()
 	end
 end
 
@@ -813,6 +848,13 @@ local function bindControls(gui: Instance)
 	icon.Rotation = -ICON_TILT
 	TweenService:Create(icon, ICON_SWING_INFO, { Rotation = ICON_TILT }):Play()
 	addPiece("Time", timer, "Left")
+
+	local counter = gui:WaitForChild("ItemCounter") :: GuiObject
+	local count = counter:WaitForChild("Value") :: TextLabel
+	itemColor = count.TextColor3
+	count.Text = tostring(itemCount)
+	itemLabel = count
+	addPiece("ItemCounter", counter, "Left")
 
 	local multiplierFrame = timeAndMultiplier:WaitForChild("Multiplier") :: GuiObject
 	local value = multiplierFrame:WaitForChild("Value") :: TextLabel

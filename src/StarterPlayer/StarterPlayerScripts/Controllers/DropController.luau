@@ -35,6 +35,8 @@ local BARRIER_NAME = "Slippery_Barrier"
 -- its drop only: a part that can collide also blocks raycasts, like the prompts' line of sight, and
 -- players walk among the slots in between
 local ITEM_BARRIER_NAME = "Items_Barrier"
+-- Parts across the end of the slide. An item that touches one finishes there, before its time's up
+local FINISH_NAME = "Finish"
 local SLOT_ITEM_NAME = "SlotItem"
 
 -- Dropped items barely grip, and their grip outweighs the slide's, so they slide down even the
@@ -74,7 +76,9 @@ local MAX_CATCH_UP = 1.5 -- Share of the slide speed, so up to 2.5x as fast
 local CATCH_UP_EASE = 2 -- How quickly an item takes up a faster speed; higher is sooner
 -- Seconds of sliding at the slide speed. An item on the slide this far behind the front one, like one
 -- held up for a long while, is too far gone to catch up, so it finishes where it is. It keeps what it
--- made up to there and makes nothing more
+-- made up to there and makes nothing more. The first one over a finish counts as sliding on past it at
+-- the slide speed, so the rest still can't fall this far behind it and hold the drop open with the
+-- camera waiting at the finish; from then on, nor can those that never reached the slide
 local LEFT_BEHIND = 4
 -- Barriers push items off to the side instead of stopping them, so they keep their pace down the
 -- slide. Within BARRIER_RANGE studs of one, an item can only close in on it so fast, slower the nearer
@@ -100,6 +104,10 @@ local STOP_TIME = 1
 -- Studs below the last ground it was over (where it was dropped from, until it's over some); an item
 -- lower than this went off the slide. The slide itself goes further down than this
 local FALL_LIMIT = 150
+-- An item that's been on screen and then goes further out of view than this, past the screen's edge
+-- or behind the camera, is gone: it finishes where it is, lost. Until it's first come into view, like
+-- one falling from a floor above the camera as the drop starts, it's left alone
+local OFF_SCREEN_TOLERANCE = 50 -- Studs
 local END_PAUSE = 0.75 -- Seconds the camera stays on where the items ended up
 local ITEM_FADE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
@@ -196,7 +204,11 @@ type DroppedItem = {
 	-- stays up on the slide when an item goes off it. -inf until it reaches the slide
 	SlideY: number,
 	Steerable: boolean, -- Has reached the slide
+	Seen: boolean, -- Has been on screen (see OFF_SCREEN_TOLERANCE)
 	Done: boolean, -- Its run is over and it's gone to the collect pad; the camera stops following it
+	-- Its run ended early: it came to rest, went off the slide or was left behind, rather than
+	-- reaching a finish or running out of time. The player has lost it
+	Lost: boolean,
 }
 
 type Drop = {
@@ -226,6 +238,10 @@ type Drop = {
 	Zoom: number, -- Times as far back as usual that the camera's backed off, eased in (see MAX_ZOOM)
 	-- Studs per second the pack goes down the slide, across the ground, eased in (see SPEED_SHARPNESS)
 	PackSpeed: number,
+	-- When the first item crossed a finish, and how far down the slide it had got (see LEFT_BEHIND).
+	-- Nil until one has
+	FinishedAt: number?,
+	FinishReach: number,
 	Barriers: { BasePart }, -- See BARRIER_NAME
 	ItemBarriers: { BasePart }, -- See ITEM_BARRIER_NAME
 	-- Finds the walls between the camera and the items and the ground under the items, but not the items
@@ -239,6 +255,9 @@ local lastDropAt = -math.huge
 -- looking through all of Workspace for them as a drop starts held up that frame
 local loadedBarriers: { [BasePart]: boolean } = {}
 local loadedItemBarriers: { [BasePart]: boolean } = {}
+-- Every finish loaded now, with its touch listener. Listened to on the finish rather than on what
+-- touches it, as with the multiplier walls
+local loadedFinishes: { [BasePart]: RBXScriptConnection } = {}
 
 -- The camera eases from where it is and looks toward its goals every frame, so it never jumps
 local cameraHeld = false -- Following the items, or still gliding back afterwards
@@ -301,10 +320,10 @@ local function measure(current: Drop, dropped: DroppedItem)
 	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, current.Speed)
 end
 
--- What the drop has made so far, how far it's got, the best multiplier it's reached and the time it
--- has left, on screen
+-- What the drop has made so far, how far it's got, the best multiplier it's reached, the time it has
+-- left and how many items it hasn't lost, on screen
 local function showStats(current: Drop)
-	local cash, distance, multiplier, passed = 0, 0, 1, 0
+	local cash, distance, multiplier, passed, kept = 0, 0, 1, 0, 0
 	for _, dropped in current.Items do
 		if not dropped.Done then
 			measure(current, dropped)
@@ -313,10 +332,14 @@ local function showStats(current: Drop)
 		distance = math.max(distance, dropped.Reached)
 		multiplier = math.max(multiplier, dropped.Multiplier)
 		passed = math.max(passed, dropped.Passed)
+		if not dropped.Lost then
+			kept += 1
+		end
 	end
 	HudController.SetDropStats(cash, distance)
 	HudController.SetDropMultiplier(multiplier, passed)
 	HudController.SetDropTime(math.max(current.EndsAt - os.clock(), 0))
+	HudController.SetDropItems(kept)
 end
 
 -- Every wall an item goes through raises the ones after it, for that item. The walls show them
@@ -334,13 +357,15 @@ end
 
 -- The item's run is over: it fades off the slide for the pile on the collect pad, and the server
 -- hears how far it got and which walls it touched, by how far down the slide they are, which it pays
--- out. A wall far behind may have streamed out by now, so it isn't sent itself
-local function finishItem(current: Drop, dropped: DroppedItem)
+-- out. A wall far behind may have streamed out by now, so it isn't sent itself. Lost if its run ended
+-- early (see DroppedItem.Lost)
+local function finishItem(current: Drop, dropped: DroppedItem, lost: boolean)
 	if dropped.Done then
 		return
 	end
 	measure(current, dropped)
 	dropped.Done = true
+	dropped.Lost = lost
 	showHits(current)
 	local gates = {}
 	for _, gate in dropped.Gates do
@@ -410,7 +435,9 @@ local function spawnCopy(current: Drop, item: Items.Item, level: number, slotKey
 		GroundY = current.StartY,
 		SlideY = -math.huge,
 		Steerable = false,
+		Seen = false,
 		Done = false,
+		Lost = false,
 	}
 	for _, part in parts do
 		current.ByPart[part] = dropped
@@ -434,6 +461,20 @@ local function onWallTouched(wall: BasePart, hit: BasePart)
 	Drops.AddWall(dropped.Gates, wall, current.Start, current.Direction, current.Slide)
 	MultiplierWallController.Pop(wall)
 	showHits(current)
+end
+
+-- An item that reaches the end of the slide finishes there, keeping what it made on the way. The
+-- first one still sets the pace for the rest (see LEFT_BEHIND)
+local function onFinishTouched(hit: BasePart)
+	local current = drop
+	local dropped = current and current.ByPart[hit]
+	if not current or not dropped or dropped.Done then
+		return
+	end
+	finishItem(current, dropped, false)
+	if not current.FinishedAt then
+		current.FinishedAt, current.FinishReach = os.clock(), dropped.Reached
+	end
 end
 
 -- The character is anchored through the drop, so the steering keys don't walk it off. Anchored on
@@ -472,7 +513,7 @@ local function endDrop()
 		return
 	end
 	for _, dropped in current.Items do
-		finishItem(current, dropped)
+		finishItem(current, dropped, false)
 	end
 	showStats(current)
 	drop = nil
@@ -532,10 +573,29 @@ local function getZoom(active: { DroppedItem }, followed: Vector3, away: Vector3
 	return math.min(zoom, MAX_ZOOM)
 end
 
+-- Studs the whole item is out of the camera's view, as it was last frame: how far outside the nearest
+-- side of the view, or behind the camera. 0 or less while any of it is on screen
+local function getOutOfView(part: BasePart): number
+	local camera = workspace.CurrentCamera
+	local viewport = camera.ViewportSize
+	local halfUp = math.rad(camera.FieldOfView) / 2
+	local halfAcross = math.atan(math.tan(halfUp) * viewport.X / math.max(viewport.Y, 1))
+	local offset = camera.CFrame:PointToObjectSpace(part.Position)
+	local ahead = -offset.Z
+	-- The view's sides all meet at the camera, each turned out from straight ahead by half the view
+	local out = math.max(
+		-ahead,
+		math.abs(offset.X) * math.cos(halfAcross) - ahead * math.sin(halfAcross),
+		math.abs(offset.Y) * math.cos(halfUp) - ahead * math.sin(halfUp)
+	)
+	return out - part.Size.Magnitude / 2
+end
+
 -- Once the drop's time is up, every item finishes where it is. Before that, items that come to rest,
--- go off the slide or are left far behind finish where they are, and the rest are held to the slide
--- speed down the slide, lie along the ground and, once on the slide, go where they're steered as a
--- pack. The camera aims at them, and once none are left, the drop ends after a moment
+-- go off the slide, go off screen (see OFF_SCREEN_TOLERANCE) or are left far behind are lost where
+-- they are, and those that touch a finish finish there (see onFinishTouched). The rest are held to
+-- the slide speed down the slide, lie along the ground and, once on the slide, go where they're
+-- steered as a pack. The camera aims at them, and once none are left, the drop ends after a moment
 local function followItems(current: Drop, dt: number)
 	local timeUp = os.clock() >= current.EndsAt
 	local active: { DroppedItem } = {}
@@ -545,16 +605,55 @@ local function followItems(current: Drop, dt: number)
 		end
 		local part = dropped.Part
 		if timeUp or not part.Parent or part.Position.Y < dropped.GroundY - FALL_LIMIT then
-			finishItem(current, dropped)
+			finishItem(current, dropped, not timeUp)
+			continue
+		end
+		local outOfView = getOutOfView(part)
+		if outOfView <= 0 then
+			dropped.Seen = true
+		elseif dropped.Seen and outOfView > OFF_SCREEN_TOLERANCE then
+			finishItem(current, dropped, true)
 			continue
 		end
 		local velocity = part.AssemblyLinearVelocity
 		local still = velocity:Dot(current.Direction) < STOPPED_SPEED and math.abs(velocity.Y) < STOPPED_SPEED
 		dropped.StillFor = if still then dropped.StillFor + dt else 0
 		if dropped.StillFor >= STOP_TIME then
-			finishItem(current, dropped)
+			finishItem(current, dropped, true)
 		else
 			table.insert(active, dropped)
+		end
+	end
+
+	local lead = -math.huge -- Studs down the slide that the front item on it has got
+	for _, dropped in active do
+		local position = dropped.Part.Position
+		if not dropped.Steerable then
+			local ground = workspace:Raycast(position, -Vector3.yAxis * dropped.Probe, current.WorldRay)
+			dropped.Steerable = ground ~= nil and ground.Instance.Name == SLIDE_NAME
+		end
+		if dropped.Steerable then
+			lead = math.max(lead, (position - current.Start):Dot(current.Direction))
+		end
+	end
+	-- The first one over a finish slides on past it (see LEFT_BEHIND)
+	local finishedAt = current.FinishedAt
+	if finishedAt then
+		lead = math.max(lead, current.FinishReach + current.SlideSpeed * (os.clock() - finishedAt))
+	end
+	-- Items left too far behind the front one finish where they are. Until one's crossed a finish, the
+	-- front one never is, so some are always left. The pack's middle counts one that's gone off the
+	-- slide as still up on it
+	local center = Vector3.zero
+	for index = #active, 1, -1 do
+		local dropped = active[index]
+		local position = dropped.Part.Position
+		local behind = lead - (position - current.Start):Dot(current.Direction)
+		if (dropped.Steerable or finishedAt) and behind > current.SlideSpeed * LEFT_BEHIND then
+			finishItem(current, dropped, true)
+			table.remove(active, index)
+		else
+			center += Vector3.new(position.X, math.max(position.Y, dropped.SlideY), position.Z)
 		end
 	end
 	showStats(current)
@@ -570,32 +669,6 @@ local function followItems(current: Drop, dt: number)
 			end)
 		end
 		return
-	end
-
-	local lead = -math.huge -- Studs down the slide that the front item on it has got
-	for _, dropped in active do
-		local position = dropped.Part.Position
-		if not dropped.Steerable then
-			local ground = workspace:Raycast(position, -Vector3.yAxis * dropped.Probe, current.WorldRay)
-			dropped.Steerable = ground ~= nil and ground.Instance.Name == SLIDE_NAME
-		end
-		if dropped.Steerable then
-			lead = math.max(lead, (position - current.Start):Dot(current.Direction))
-		end
-	end
-	-- Items left too far behind the front one finish where they are. The front one never is, so some
-	-- are always left. The pack's middle counts one that's gone off the slide as still up on it
-	local center = Vector3.zero
-	for index = #active, 1, -1 do
-		local dropped = active[index]
-		local position = dropped.Part.Position
-		local behind = lead - (position - current.Start):Dot(current.Direction)
-		if dropped.Steerable and behind > current.SlideSpeed * LEFT_BEHIND then
-			finishItem(current, dropped)
-			table.remove(active, index)
-		else
-			center += Vector3.new(position.X, math.max(position.Y, dropped.SlideY), position.Z)
-		end
 	end
 	center /= #active
 	if frozenRoot then
@@ -917,6 +990,8 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Slope = slope,
 		Zoom = 1,
 		PackSpeed = 0,
+		FinishedAt = nil,
+		FinishReach = 0,
 		Barriers = barriers,
 		ItemBarriers = itemBarriers,
 		WorldRay = worldRay,
@@ -954,7 +1029,7 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 	holdCamera()
 end
 
-local function trackBarrier(instance: Instance)
+local function trackPart(instance: Instance)
 	if not instance:IsA("BasePart") then
 		return
 	end
@@ -962,18 +1037,34 @@ local function trackBarrier(instance: Instance)
 		loadedBarriers[instance] = true
 	elseif instance.Name == ITEM_BARRIER_NAME then
 		loadedItemBarriers[instance] = true
+	elseif instance.Name == FINISH_NAME and not loadedFinishes[instance] then
+		loadedFinishes[instance] = instance.Touched:Connect(onFinishTouched)
 	end
+end
+
+local function untrackPart(instance: Instance)
+	loadedBarriers[instance :: any] = nil
+	loadedItemBarriers[instance :: any] = nil
+	local touched = loadedFinishes[instance :: any]
+	if touched then
+		touched:Disconnect()
+		loadedFinishes[instance :: any] = nil
+	end
+end
+
+-- Whether a drop's going, and where its items are: the middle of the pack the camera follows, or nil
+-- before its first frame. It's going until its items are all gone or the player exits it
+function DropController.GetDrop(): (boolean, Vector3?)
+	local current = drop
+	return current ~= nil, if current then current.Followed else nil
 end
 
 function DropController.Start()
 	for _, descendant in workspace:GetDescendants() do
-		trackBarrier(descendant)
+		trackPart(descendant)
 	end
-	workspace.DescendantAdded:Connect(trackBarrier)
-	workspace.DescendantRemoving:Connect(function(descendant)
-		loadedBarriers[descendant :: any] = nil
-		loadedItemBarriers[descendant :: any] = nil
-	end)
+	workspace.DescendantAdded:Connect(trackPart)
+	workspace.DescendantRemoving:Connect(untrackPart)
 	MultiplierWallController.Touched:Connect(onWallTouched)
 	ProximityPromptService.PromptTriggered:Connect(function(prompt)
 		local place = Places.Find(prompt)
