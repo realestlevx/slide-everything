@@ -1,3 +1,4 @@
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,6 +8,7 @@ local TweenService = game:GetService("TweenService")
 
 local ApplyGradient = require(ReplicatedStorage.Shared.ApplyGradient)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
@@ -30,9 +32,12 @@ local BILLBOARD_NAME = "Stuff_UpgradeDisplay"
 local SLOT_ITEM_NAME = "SlotItem"
 local PARTICLES_NAME = "Particles" -- Folder in the slot part with the emitters that burst on an upgrade
 local FINISH_NAME = "Finish" -- Attachment in the slot part with the emitters that burst when an item lands
--- On a pass slot's prompt until its owner has the pass
-local BUY_TEXT = " Buy Slot"
-local BUY_TEXT_COLOR = Color3.fromRGB(40, 220, 70)
+-- Over each pass slot, selling the pass, with its price on the PurchaseButton's UpgradePrice label
+local PASS_BILLBOARD_NAME = "MoreSlot_Purchase"
+local PURCHASE_BUTTON_NAME = "PurchaseButton"
+local ROBUX = "\u{E002}" -- Shows as the Robux icon
+local PRICE_CHECK_ATTEMPTS = 3 -- Tries at asking Roblox what the pass costs this player
+local PRICE_CHECK_RETRY_DELAY = 2 -- Seconds between those tries
 
 local PRICE_ERROR_COLOR = Color3.fromRGB(255, 50, 50)
 local PRICE_FLASH = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In) -- Fades the red back out
@@ -75,9 +80,8 @@ type Placing = {
 
 local slotPlaces: { [Model]: Folder } = {} -- Every slot seen so far -> its place
 local billboards: { [Model]: BillboardGui } = {} -- Slot -> the copy of its billboard in PlayerGui
+local passBillboards: { [Model]: BillboardGui } = {} -- Pass slot -> the copy of its pass billboard in PlayerGui
 local priceColors: { [TextLabel]: Color3 } = {} -- Each upgrade price label's own color, taken before it first flashes
--- Each pass slot prompt's own text color, taken before it first turns green to sell the pass
-local promptColors: { [ProximityPrompt]: Color3 } = {}
 local fadedPlaces: { [Folder]: boolean } = {} -- Places whose slots are faded out while their items drop
 local billboardSizes: { [BillboardGui]: UDim2 } = {} -- Each billboard's own size, taken before it first shrinks away
 -- Each slot item -> the size it's growing to, or at, so it only grows again when its level changes
@@ -85,6 +89,7 @@ local itemSizes: { [BasePart]: number } = setmetatable({}, { __mode = "k" }) :: 
 local placing: { [Model]: Placing } = {} -- Slots this player is putting an item into right now
 local filledAt: { [Model]: number } = {} -- When an item was last put in each slot by hand
 local rarityTransparencies: { [BasePart]: number } = {} -- Each rarity part's own transparency, taken before it first flashes
+local passPrice: number? = nil -- What the paid slots pass costs this player, once Roblox has said
 
 local SlotController = {}
 
@@ -180,23 +185,15 @@ local function refresh(slot: Model)
 	-- The server keeps how many floors the owner has on the place
 	local floors = place:GetAttribute("Floors")
 	local built = Places.GetSlotFloor(slot) <= (if typeof(floors) == "number" then floors else 1)
-	if prompt and slot:GetAttribute("GamePass") == true and not unlocked and built then
-		-- A pass slot the owner doesn't have yet sells the pass, so its prompt is always up
-		local color = prompt:GetAttribute("ProximityTextColor")
-		if not promptColors[prompt] and typeof(color) == "Color3" then
-			promptColors[prompt] = color
-		end
-		prompt.ActionText = BUY_TEXT
-		prompt:SetAttribute("ProximityTextColor", BUY_TEXT_COLOR)
-		prompt:SetAttribute("ProximityTextGradient", nil)
-		prompt:SetAttribute("ProximityGradientText", nil)
-		PromptController.SetHidden(place, prompt, false)
-	elseif prompt then
-		-- Back to its own color once the pass is the owner's
-		if promptColors[prompt] then
-			prompt:SetAttribute("ProximityTextColor", promptColors[prompt])
-			promptColors[prompt] = nil
-		end
+	local selling = slot:GetAttribute("GamePass") == true and not unlocked and built
+
+	-- Only the owner is sold the pass from their own place's slots, and only until they have it
+	local passBillboard = passBillboards[slot]
+	if passBillboard then
+		passBillboard.Enabled = selling and place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+	end
+
+	if prompt then
 		local held = InventoryController.GetEquippedItem()
 		-- The text is set while the prompt is still hidden, since the prompt UI only reads it when shown
 		if held then
@@ -271,6 +268,89 @@ local function copyBillboard(slot: Model, original: BillboardGui)
 
 	refresh(slot)
 	billboard.Parent = PlayerGui
+end
+
+-- The pass's price on a pass slot's billboard, hidden until Roblox has given it rather than showing
+-- whatever the design has
+local function showPassPrice(billboard: BillboardGui)
+	local label = billboard:FindFirstChild("UpgradePrice", true)
+	if not (label and label:IsA("TextLabel")) then
+		return
+	end
+	label.Visible = passPrice ~= nil
+	if passPrice then
+		label.Text = `{ROBUX}{passPrice}`
+	end
+end
+
+-- Roblox tells the server once it's bought, which opens the pass slots
+local function promptPass()
+	if GamePasses.PaidSlots > 0 then
+		MarketplaceService:PromptGamePassPurchase(LocalPlayer, GamePasses.PaidSlots)
+	end
+end
+
+-- The pass billboard is copied into PlayerGui like the stats billboard, so its purchase button takes
+-- clicks. The one in the slot stays hidden
+local function copyPassBillboard(slot: Model, original: BillboardGui)
+	local old = passBillboards[slot]
+	if old then
+		old:Destroy()
+	end
+
+	local billboard = original:Clone()
+	billboard.Adornee = original.Parent
+	billboard.ResetOnSpawn = false
+	passBillboards[slot] = billboard
+	original.Enabled = false
+
+	local button = billboard:FindFirstChild(PURCHASE_BUTTON_NAME, true)
+	if button and button:IsA("GuiButton") then
+		button.Activated:Connect(promptPass)
+		ButtonController.Animate(button)
+	end
+
+	-- The original leaves with its part when that streams out, and the copy goes with it
+	original.AncestryChanged:Connect(function()
+		if not original:IsDescendantOf(workspace) and passBillboards[slot] == billboard then
+			passBillboards[slot] = nil
+			billboard:Destroy()
+		end
+	end)
+
+	showPassPrice(billboard)
+	refresh(slot)
+	billboard.Parent = PlayerGui
+end
+
+-- Asks Roblox what the paid slots pass costs this player. Regional pricing can make that less than
+-- the price it's set at, so it's asked from here, a few times over if Roblox can't be reached
+local function loadPassPrice()
+	if GamePasses.PaidSlots <= 0 then
+		return
+	end
+	local ok, result
+	for attempt = 1, PRICE_CHECK_ATTEMPTS do
+		ok, result = pcall(MarketplaceService.GetProductInfoAsync, MarketplaceService, GamePasses.PaidSlots, Enum.InfoType.GamePass)
+		if ok or attempt == PRICE_CHECK_ATTEMPTS then
+			break
+		end
+		task.wait(PRICE_CHECK_RETRY_DELAY)
+	end
+	if not ok then
+		warn(`Couldn't get the paid slots pass's price: {result}`)
+		return
+	end
+	-- Nil while the pass is off sale, when the price stays hidden
+	local price = result.PriceInRobux
+	if typeof(price) ~= "number" then
+		return
+	end
+
+	passPrice = price
+	for _, billboard in passBillboards do
+		showPassPrice(billboard)
+	end
 end
 
 local function getOwnPlace(): Folder?
@@ -532,6 +612,8 @@ local function onDescendantAdded(place: Folder, descendant: Instance)
 	elseif descendant:IsA("BillboardGui") and descendant.Name == POPUP_NAME then
 		-- Only the design for the popups; left showing, everyone would see it sit in the slot
 		descendant.Enabled = false
+	elseif descendant:IsA("BillboardGui") and descendant.Name == PASS_BILLBOARD_NAME then
+		copyPassBillboard(slot, descendant)
 	elseif descendant:IsA("ProximityPrompt") then
 		-- Streamed back in as a fresh prompt that doesn't know it was hidden
 		refresh(slot)
@@ -561,9 +643,9 @@ function SlotController.SetFaded(place: Folder, faded: boolean)
 			end
 		end
 
-		-- Billboards have no transparency of their own, so they shrink away instead
-		local billboard = billboards[slot]
-		if billboard then
+		-- Billboards have no transparency of their own, so they shrink away instead. Either can be
+		-- missing, and the loop skips it
+		for _, billboard in { billboards[slot], passBillboards[slot] } do
 			local size = billboardSizes[billboard] or billboard.Size
 			billboardSizes[billboard] = size
 			TweenService:Create(billboard, SLOT_FADE_INFO, { Size = if faded then UDim2.new() else size }):Play()
@@ -590,6 +672,8 @@ function SlotController.Start()
 		place:GetAttributeChangedSignal("OwnerUserId"):Connect(refreshPlace)
 		place:GetAttributeChangedSignal("Floors"):Connect(refreshPlace)
 	end
+
+	task.spawn(loadPassPrice)
 
 	-- Picking an item up or putting it away shows or hides the place prompts
 	LocalPlayer:GetAttributeChangedSignal("EquippedItem"):Connect(refreshAll)

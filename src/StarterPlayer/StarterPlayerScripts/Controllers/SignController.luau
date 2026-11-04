@@ -18,11 +18,14 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- Each panel on a sign is a Frame with a button (its price on the button's TextLabel) and a
--- Value_Increase label ("1 > 2"). The Increase Slots panel is its own thing; the rest are the
--- level upgrades in SignUpgrades, found by their Frame
+-- Value_Increase label ("1 > 2"), or the value split over a Value_Increase_Before label ("1") and a
+-- Value_Increase_After one ("2"). The Increase Slots panel is its own thing; the rest are the level
+-- upgrades in SignUpgrades, found by their Frame
 local SLOTS_PANEL = "Slots"
 local SLOTS_FRAME_NAME = "Slots_Frame"
 local VALUE_LABEL_NAME = "Value_Increase"
+local BEFORE_LABEL_NAME = "Value_Increase_Before"
+local AFTER_LABEL_NAME = "Value_Increase_After"
 local ICON_NAMES = { "Icon", "ImageLabel" } -- The panel's picture, which grows and presses with its button
 local MAX_TEXT = "MAX" -- On the button once there's nothing left to buy
 
@@ -44,6 +47,8 @@ type Panel = {
 	Button: GuiButton?,
 	Price: TextLabel?,
 	Value: TextLabel?,
+	Before: TextLabel?,
+	After: TextLabel?,
 	NextPrice: number?, -- What its button buys the next one for. Nil at MAX, or before the place's attributes are in
 }
 
@@ -157,10 +162,18 @@ local function refreshOwner(place: Folder)
 	end
 end
 
-local function show(panel: Panel, value: string, price: number?)
+-- value is what it's at now and nextValue what buying takes it to, nil at MAX, which a split value
+-- shows after it. text is for a Value_Increase label instead of "value > nextValue"
+local function show(panel: Panel, value: string, nextValue: string?, price: number?, text: string?)
 	panel.NextPrice = price
 	if panel.Value then
-		panel.Value.Text = value
+		panel.Value.Text = text or if nextValue then `{value} > {nextValue}` else value
+	end
+	if panel.Before then
+		panel.Before.Text = value
+	end
+	if panel.After then
+		panel.After.Text = nextValue or MAX_TEXT
 	end
 	if panel.Price then
 		-- Two decimals, so prices like $1.35K show in full
@@ -177,11 +190,11 @@ local function refreshPanel(place: Folder, name: string, panel: Panel)
 		local nextFloor = place:GetAttribute("NextFloor")
 		if typeof(unlocked) == "number" then
 			local nextPrice = if typeof(price) == "number" then price else nil
-			local value = if typeof(nextFloor) == "number"
-				then `Floor {nextFloor}`
-				elseif nextPrice then `{unlocked} > {unlocked + 1}`
-				else `{unlocked}`
-			show(panel, value, nextPrice)
+			if typeof(nextFloor) == "number" then
+				show(panel, `{unlocked}`, `Floor {nextFloor}`, nextPrice, `Floor {nextFloor}`)
+			else
+				show(panel, `{unlocked}`, if nextPrice then `{unlocked + 1}` else nil, nextPrice)
+			end
 		end
 		return
 	end
@@ -193,8 +206,12 @@ local function refreshPanel(place: Folder, name: string, panel: Panel)
 	local suffix = SignUpgrades.Upgrades[name].Suffix
 	local value = SignUpgrades.GetValue(name, level)
 	local nextValue = SignUpgrades.GetNextValue(name, level)
-	local text = if nextValue then `{value}{suffix} > {nextValue}{suffix}` else `{value}{suffix}`
-	show(panel, text, SignUpgrades.GetNextPrice(name, level))
+	show(
+		panel,
+		`{value}{suffix}`,
+		if nextValue then `{nextValue}{suffix}` else nil,
+		SignUpgrades.GetNextPrice(name, level)
+	)
 end
 
 local function refreshPlace(place: Folder)
@@ -260,10 +277,14 @@ local function copySign(place: Folder, original: SurfaceGui)
 		end
 		local button = frame:FindFirstChildWhichIsA("GuiButton")
 		local value = frame:FindFirstChild(VALUE_LABEL_NAME)
+		local before = frame:FindFirstChild(BEFORE_LABEL_NAME)
+		local after = frame:FindFirstChild(AFTER_LABEL_NAME)
 		sign.Panels[name] = {
 			Button = button,
 			Price = button and button:FindFirstChildOfClass("TextLabel"),
 			Value = if value and value:IsA("TextLabel") then value else nil,
+			Before = if before and before:IsA("TextLabel") then before else nil,
+			After = if after and after:IsA("TextLabel") then after else nil,
 		}
 
 		if button then

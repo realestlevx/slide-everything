@@ -37,9 +37,10 @@ local FLOOR_FOLDER_PATTERN = "^Floor(%d+)_Slot_Positions$"
 -- On a slot that comes with the GamePasses.PaidSlots pass instead of a price: there for everyone to
 -- see from the start, and usable once the place's owner has the pass
 local GAME_PASS_ATTRIBUTE = "GamePass"
--- Billboards in a slot that are only designs: each client copies them (the stats and buttons, and
--- the "+ $" popups) and shows its copies, so the slot's own stay hidden, even in the server's view
-local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash" }
+-- Billboards in a slot that are only designs: each client copies them (the stats and buttons, the
+-- "+ $" popups and a pass slot's purchase button) and shows its copies, so the slot's own stay
+-- hidden, even in the server's view
+local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash", "MoreSlot_Purchase" }
 local PLACE_COUNT_ATTRIBUTE = "PlaceCount" -- On a slot: how many times an item was put in it by hand
 local EQUIP_BEST_COOLDOWN = 0.5 -- Seconds between Equip Best presses that count, so spamming it does nothing
 local PASS_CHECK_ATTEMPTS = 3 -- Tries at asking Roblox whether a joining player has the paid slots pass
@@ -347,25 +348,13 @@ local function refreshPlace(place: Folder)
 	updateSign(place, data)
 end
 
--- The owner puts the item in their hands into an empty slot. A pass slot they don't have yet sells
--- them the pass instead
+-- The owner puts the item in their hands into an empty slot. Pass slots are sold from their
+-- billboard's purchase button instead (see SlotController)
 local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 	if place:GetAttribute("OwnerUserId") ~= player.UserId then
 		return
 	end
 	local data = PlayerDataService.Get(player)
-	if not isOnBuiltFloor(data, slot) then
-		return
-	end
-	if isPassSlot(slot) and not passOwners[player] then
-		if GamePasses.PaidSlots > 0 then
-			MarketplaceService:PromptGamePassPurchase(player, GamePasses.PaidSlots)
-		else
-			warn("GamePasses.PaidSlots needs the paid slots pass's id before it can be sold")
-		end
-		return
-	end
-
 	local owned = InventoryService.GetEquipped(player)
 	local item = owned and Items[owned.Id]
 	if not (data and owned and item) then

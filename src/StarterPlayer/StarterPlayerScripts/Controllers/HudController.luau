@@ -79,6 +79,11 @@ local SHAKE_BUILD = 1.5
 local GROW_STEP = 0.1 -- Share bigger it gets, for each wall
 local MAX_SHAKE_WALLS = 6
 local GROW_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out) -- Pops a little past its new size
+-- Every time it goes up while the items slide, after the first, a copy of it grows out from behind
+-- it and fades away, gradient and stroke too, its rainbow scrolling in step with the multiplier's
+local POP_GROW = 2.5 -- Times the multiplier's size it grows to
+local POP_GROW_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local POP_FADE_INFO = TweenInfo.new(0.5, Enum.EasingStyle.Linear)
 -- Every wall that multiplies also sends copies of MultiplierUp's Template up the screen from near the
 -- bottom, each a color of the rainbow, turning a little and fading as they rise
 local MULTIPLIER_UP_COUNT = 10
@@ -151,6 +156,7 @@ local valueLabel: TextLabel? = nil -- Shows the multiplier
 local valueRest = UDim2.new() -- Where it sits when it isn't shaking
 local valueScale: UIScale? = nil
 local valueGradient: UIGradient? = nil
+local popGradients: { [UIGradient]: boolean } = {} -- The gradients of the copies still growing out of it
 local multiplierUpTemplate: ImageLabel? = nil
 local vignette: ImageLabel? = nil
 local vignetteTransparency = 0 -- As laid out in Studio, which it fades in to
@@ -706,9 +712,50 @@ local function flashVignette()
 	fadeIn:Play()
 end
 
+-- A copy of the multiplier, as it shows now, grows out from behind it as it fades
+local function popMultiplier()
+	local label = valueLabel
+	local holder = label and label.Parent
+	if not (label and holder) then
+		return
+	end
+	local pop = label:Clone()
+	pop.Name = "MultiplierPop"
+	pop.Position = valueRest
+	pop.Rotation = 0
+	pop.ZIndex = label.ZIndex - 1
+	local growth = getGrowth(multiplierWalls)
+	local scale = pop:FindFirstChildOfClass("UIScale")
+	if scale then
+		scale.Scale = growth
+	end
+	local gradient = pop:FindFirstChildOfClass("UIGradient")
+	if gradient then
+		popGradients[gradient] = true
+	end
+	local stroke = pop:FindFirstChildOfClass("UIStroke")
+	pop.Parent = holder
+
+	if scale then
+		TweenService:Create(scale, POP_GROW_INFO, { Scale = growth * POP_GROW }):Play()
+	end
+	TweenService:Create(pop, POP_FADE_INFO, { TextTransparency = 1 }):Play()
+	if stroke then
+		TweenService:Create(stroke, POP_FADE_INFO, { Transparency = 1 }):Play()
+	end
+	task.delay(math.max(POP_GROW_INFO.Time, POP_FADE_INFO.Time), function()
+		if gradient then
+			popGradients[gradient] = nil
+		end
+		pop:Destroy()
+	end)
+end
+
 -- The best multiplier the drop's items have reached, and how many walls that multiply they've
 -- passed. It slides in once it's past 1x, and pops bigger with every wall
 function HudController.SetDropMultiplier(value: number, walls: number)
+	-- Not as it first goes past 1x, while it slides in
+	local increased = value > multiplier and multiplier > 1
 	multiplier = value
 	if valueLabel then
 		valueLabel.Text = `{value}x`
@@ -724,6 +771,9 @@ function HudController.SetDropMultiplier(value: number, walls: number)
 			TweenService:Create(valueScale, GROW_INFO, { Scale = getGrowth(walls) }):Play()
 		end
 	end
+	if increased and dropView then
+		popMultiplier()
+	end
 	move("Multiplier", isShown("Multiplier"))
 end
 
@@ -735,8 +785,12 @@ local function animateMultiplier()
 		return
 	end
 	local now = os.clock()
+	local colors = Rainbow(now)
 	if valueGradient then
-		valueGradient.Color = Rainbow(now)
+		valueGradient.Color = colors
+	end
+	for gradient in popGradients do
+		gradient.Color = colors
 	end
 	if now >= nextShakeAt then
 		nextShakeAt = now + 1 / SHAKE_RATE

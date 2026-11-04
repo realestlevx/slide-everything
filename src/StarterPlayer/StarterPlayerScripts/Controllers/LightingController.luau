@@ -7,11 +7,13 @@ local DropController = require(script.Parent.DropController)
 local LocalPlayer = Players.LocalPlayer
 
 -- The lighting changes with the stage under what the camera's following: the items through a drop,
--- the player otherwise. Stages are the folders in Workspace.Stages, and a stage's look is picked by its
--- Name attribute ("Forest"), so every stage with the same name looks the same. Anywhere else, and on
--- stages without a look below, it's the Lighting as it's set in Studio. Through a drop, items over
--- somewhere that isn't a stage, like past the end of the slide, keep the look they had, so it only
--- goes back once they're all gone or the player exits the drop
+-- the player otherwise. Stages are the folders in each zone's Stages folder, like
+-- Workspace.Zones.Zone1.Stages, and a stage's look is picked by its Name attribute ("Forest"), so every
+-- stage with the same name looks the same. Anywhere else, and on stages without a look below, it's the
+-- Lighting as it's set in Studio. Through a drop, items over somewhere that isn't a stage, like past
+-- the end of the slide, keep the look they had, so it only goes back once they're all gone or the
+-- player exits the drop
+local ZONES_FOLDER = "Zones"
 local STAGES_FOLDER = "Stages"
 local STAGE_NAME_ATTRIBUTE = "Name"
 local BLEND_TIME = 1 -- Seconds to ease from one look into the next
@@ -183,16 +185,29 @@ local function getFollowed(): Vector3?
 	return camera.Focus.Position
 end
 
+-- Every zone's Stages folder
+local function getStageFolders(): { Instance }
+	local folders = {}
+	local zones = workspace:FindFirstChild(ZONES_FOLDER)
+	for _, zone in if zones then zones:GetChildren() else {} do
+		local stages = zone:FindFirstChild(STAGES_FOLDER)
+		if stages then
+			table.insert(folders, stages)
+		end
+	end
+	return folders
+end
+
 -- Whether there's a stage underneath, and its look, or nil if it has none
 local function findLook(position: Vector3): (boolean, string?)
-	local stages = workspace:FindFirstChild(STAGES_FOLDER)
-	if not stages then
+	local folders = getStageFolders()
+	if #folders == 0 then
 		return false, nil
 	end
-	rayParams.FilterDescendantsInstances = { stages }
+	rayParams.FilterDescendantsInstances = folders
 	local hit = workspace:Raycast(position + Vector3.yAxis * RAY_LIFT, -Vector3.yAxis * RAY_LENGTH, rayParams)
 	local stage = if hit then hit.Instance else nil
-	while stage and stage.Parent ~= stages do
+	while stage and not table.find(folders, stage.Parent) do
 		stage = stage.Parent
 	end
 	local name = if stage then stage:GetAttribute(STAGE_NAME_ATTRIBUTE) else nil

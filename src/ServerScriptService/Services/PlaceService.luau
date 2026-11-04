@@ -5,9 +5,11 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Places = require(ReplicatedStorage.Shared.Places)
 
 local SPAWN_OFFSET = Vector3.new(0, 3, 0)
--- A base's ground is everything in its place's Bottoms folder. Its box goes on the place as the
+-- A base's ground is everything in the Bottoms folder of its place's look, its Design folder (see
+-- PlaceBuilder), measured again whenever the look's swapped. Its box goes on the place as the
 -- BaseMin and BaseMax attributes, and where its players spawn as SpawnCFrame, so clients can tell
 -- when their player has left the base and send them back even while those parts are streamed out
+local DESIGN_NAME = "Design"
 local BASE_FOLDER_NAME = "Bottoms"
 -- The market's spawn goes on Workspace.Market as SpawnCFrame too, for the top bar's Market button
 local MARKET_NAME = "Market"
@@ -75,7 +77,8 @@ end
 local function measureBase(place: Folder)
 	place:SetAttribute("SpawnCFrame", getSpawn(place))
 
-	local folder = place:FindFirstChild(BASE_FOLDER_NAME)
+	local design = place:FindFirstChild(DESIGN_NAME)
+	local folder = design and design:FindFirstChild(BASE_FOLDER_NAME)
 	local parts = if folder then folder:GetDescendants() else {}
 	local low, high = Vector3.one * math.huge, -Vector3.one * math.huge
 	for _, part in parts do
@@ -90,7 +93,12 @@ local function measureBase(place: Folder)
 		end
 	end
 	if low.X > high.X then
-		warn(`{place.Name} has no parts in a {BASE_FOLDER_NAME} folder, so its owner can't tell when they've left it`)
+		warn(
+			`{place.Name}'s {DESIGN_NAME} has no parts in a {BASE_FOLDER_NAME} folder, so its owner can't tell when they've left it`
+		)
+		-- Not the last look's box, which may not fit this one
+		place:SetAttribute("BaseMin", nil)
+		place:SetAttribute("BaseMax", nil)
 		return
 	end
 	place:SetAttribute("BaseMin", low)
@@ -165,6 +173,11 @@ function PlaceService.Start()
 		defaultImages[place] = (getBillboard(place) :: any).ImageLabel.Image
 		getBillboard(place).Enabled = false
 		measureBase(place)
+		place.ChildAdded:Connect(function(child)
+			if child.Name == DESIGN_NAME then
+				measureBase(place)
+			end
+		end)
 	end
 	local market = workspace:FindFirstChild(MARKET_NAME)
 	local marketSpawn = market and market:FindFirstChild(MARKET_SPAWN_NAME)
