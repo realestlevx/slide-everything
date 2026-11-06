@@ -9,12 +9,15 @@ local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local FloorService = require(script.Parent.FloorService)
 local InventoryService = require(script.Parent.InventoryService)
+local PassService = require(script.Parent.PassService)
 local PlaceService = require(script.Parent.PlaceService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local TutorialService = require(script.Parent.TutorialService)
 
 local RemoveFromSlot = ReplicatedStorage.Remotes.RemoveFromSlot
 local IncomeTick = ReplicatedStorage.Remotes.IncomeTick
@@ -34,6 +37,10 @@ local SLOT_POSITION_NAME = "Slot_Position"
 -- A later floor's markers are in a folder named after it, like Floor2_Slot_Positions; any others are
 -- on floor 1
 local FLOOR_FOLDER_PATTERN = "^Floor(%d+)_Slot_Positions$"
+-- What floor 1's first slot costs, as new players start with no slots at all. Its marker has no Price,
+-- like the first slot of each later floor, which stay free and open with their floor. A Price on the
+-- marker would go first
+local FIRST_SLOT_PRICE = 100
 -- On a slot that comes with the GamePasses.PaidSlots pass instead of a price: there for everyone to
 -- see from the start, and usable once the place's owner has the pass
 local GAME_PASS_ATTRIBUTE = "GamePass"
@@ -43,8 +50,6 @@ local GAME_PASS_ATTRIBUTE = "GamePass"
 local DESIGN_BILLBOARDS = { "Stuff_UpgradeDisplay", "Cash", "MoreSlot_Purchase" }
 local PLACE_COUNT_ATTRIBUTE = "PlaceCount" -- On a slot: how many times an item was put in it by hand
 local EQUIP_BEST_COOLDOWN = 0.5 -- Seconds between Equip Best presses that count, so spamming it does nothing
-local PASS_CHECK_ATTEMPTS = 3 -- Tries at asking Roblox whether a joining player has the paid slots pass
-local PASS_CHECK_RETRY_DELAY = 2 -- Seconds between those tries
 
 local rarityPartColors: { [BasePart]: Color3 } = {} -- Each Rarity part's own color, for empty slots
 local partTransparencies: { [BasePart]: number } = {} -- Each slot part's own transparency, for once it's bought
@@ -140,6 +145,8 @@ local function spawnSlots(place: Folder)
 		local price = marker:GetAttribute("Price")
 		if typeof(price) == "number" then
 			slot:SetAttribute("Price", math.round(price * Floors.GetSlotPriceMultiplier(floor)))
+		elseif floor == 1 and number == 1 and not isPass then
+			slot:SetAttribute("Price", FIRST_SLOT_PRICE)
 		end
 		for _, billboardName in DESIGN_BILLBOARDS do
 			local billboard = slot:FindFirstChild(billboardName, true)
@@ -279,18 +286,23 @@ local function getEarnings(player: Player): ({ [string]: number }, number)
 	return earnings, total
 end
 
--- Keeps MoneyPerSecond (shown on the place's owner billboard) in step with the slots
+-- Keeps MoneyPerSecond (shown on the place's owner billboard, with their cash pass) in step with the
+-- slots
 local function updateMoneyPerSecond(player: Player)
 	local _, total = getEarnings(player)
 	PlayerDataService.SetMoneyPerSecond(player, total)
 end
 
--- Pays out a second's earnings. Only the player's own client hears what each slot made,
--- for its popups
+-- Pays out a second's earnings, multiplied by their cash pass. Only the player's own client hears what
+-- each slot made, for its popups
 local function payOut(player: Player)
 	local earnings, total = getEarnings(player)
 	if total > 0 then
-		PlayerDataService.AddMoney(player, total)
+		local multiplier = GamePasses.GetCashMultiplier(player)
+		for name, amount in earnings do
+			earnings[name] = amount * multiplier
+		end
+		PlayerDataService.AddMoney(player, total * multiplier)
 		IncomeTick:FireClient(player, earnings)
 	end
 end
@@ -351,7 +363,7 @@ end
 -- The owner puts the item in their hands into an empty slot. Pass slots are sold from their
 -- billboard's purchase button instead (see SlotController)
 local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
-	if place:GetAttribute("OwnerUserId") ~= player.UserId then
+	if place:GetAttribute("OwnerUserId") ~= player.UserId or not Tutorial.Allows(player, "Place") then
 		return
 	end
 	local data = PlayerDataService.Get(player)
@@ -373,6 +385,7 @@ local function onPlaceTriggered(place: Folder, slot: Model, player: Player)
 	show(slot, owned)
 	InventoryService.Sync(player)
 	updateMoneyPerSecond(player)
+	TutorialService.Complete(player, "Place")
 end
 
 -- The backpack's Equip Best button: the items that earn the most go in the player's open slots, as
@@ -381,7 +394,7 @@ end
 local function onEquipBest(player: Player)
 	local data = PlayerDataService.Get(player)
 	local place = PlaceService.GetPlace(player)
-	if not (data and place) then
+	if not (data and place and Tutorial.Allows(player, "EquipBest")) then
 		return
 	end
 	local now = os.clock()
@@ -484,7 +497,7 @@ end
 -- The slot's Remove button: its item goes back to the hotbar
 local function onRemove(player: Player, slot: any)
 	local data = PlayerDataService.Get(player)
-	if not (data and isOwnSlot(player, slot)) then
+	if not (data and isOwnSlot(player, slot) and Tutorial.Allows(player, "Remove")) then
 		return
 	end
 	local key = Places.GetSlotKey(slot)
@@ -503,7 +516,7 @@ end
 -- slot
 local function onUpgrade(player: Player, slot: any)
 	local data = PlayerDataService.Get(player)
-	if not (data and isOwnSlot(player, slot)) then
+	if not (data and isOwnSlot(player, slot) and Tutorial.Allows(player, "UpgradeItem")) then
 		return
 	end
 	local uid = data.Slots[Places.GetSlotKey(slot)]
@@ -526,6 +539,7 @@ local function onUpgrade(player: Player, slot: any)
 	slot:SetAttribute("ItemLevel", owned.Level)
 	updateMoneyPerSecond(player)
 	UpgradeResult:FireClient(player, slot, true)
+	TutorialService.Complete(player, "UpgradeItem")
 end
 
 -- With every slot on their floors bought, the sign sells the player the next floor. Its free slots
@@ -558,7 +572,7 @@ end
 -- if the player can pay for it. Only at the player's own place, whichever sign was clicked
 local function onBuySlot(player: Player, place: any)
 	local data = PlayerDataService.Get(player)
-	if not (data and place ~= nil and place == PlaceService.GetPlace(player)) then
+	if not (data and place ~= nil and place == PlaceService.GetPlace(player) and Tutorial.Allows(player, "Slots")) then
 		return
 	end
 	local slot = getNextSlot(place, data)
@@ -580,27 +594,7 @@ local function onBuySlot(player: Player, place: any)
 	-- Spending the starting money on slots before buying an item would leave nothing to earn with
 	InventoryService.EnsureCanStart(player)
 	BuySlotResult:FireClient(player, true)
-end
-
--- Asks Roblox whether the player has the paid slots pass, a few times over if it can't be reached.
--- Nil if it never answers
-local function askOwnsPass(player: Player): boolean?
-	if GamePasses.PaidSlots <= 0 then
-		return false
-	end
-	local ok, result
-	for attempt = 1, PASS_CHECK_ATTEMPTS do
-		ok, result = pcall(MarketplaceService.UserOwnsGamePassAsync, MarketplaceService, player.UserId, GamePasses.PaidSlots)
-		if ok or attempt == PASS_CHECK_ATTEMPTS or player.Parent ~= Players then
-			break
-		end
-		task.wait(PASS_CHECK_RETRY_DELAY)
-	end
-	if not ok then
-		warn(`Couldn't check whether {player.Name} has the paid slots pass: {result}`)
-		return nil
-	end
-	return result == true
+	TutorialService.Complete(player, "Slots")
 end
 
 -- Once it's known whether the player has the pass, their place is refreshed: their pass slots open up
@@ -620,7 +614,7 @@ end
 -- Checked as the player joins. If Roblox can't be asked, it stays unknown, and the pass slots hold on
 -- to their items without opening
 local function checkPass(player: Player)
-	local owns = askOwnsPass(player)
+	local owns = PassService.AskOwns(player, GamePasses.PaidSlots)
 	if owns ~= nil then
 		setPass(player, owns)
 	end

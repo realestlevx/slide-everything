@@ -127,10 +127,17 @@ function Drops.Measure(walls: { Wall }, distance: number): (number, number, numb
 	return paid + (distance - from) * multiplier, multiplier, passed
 end
 
--- What an item earns for its run, from the studs at 1x that Measure gives and the owner's Sliding Speed
-function Drops.GetPay(item: Items.Item, level: number, paidDistance: number, speed: number): number
+-- What an item earns for its run, from the studs at 1x that Measure gives, the owner's Sliding Speed
+-- and what their cash pass multiplies it by
+function Drops.GetPay(
+	item: Items.Item,
+	level: number,
+	paidDistance: number,
+	speed: number,
+	cashMultiplier: number
+): number
 	local perStud = speed * Drops.SLIDE_SPEED / Drops.GetSlideSpeed(speed)
-	return Upgrades.GetMoneyPerSecond(item, level) * Drops.STUD_SECONDS * paidDistance * perStud
+	return Upgrades.GetMoneyPerSecond(item, level) * Drops.STUD_SECONDS * paidDistance * perStud * cashMultiplier
 end
 
 return Drops

@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
+local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Places = require(ReplicatedStorage.Shared.Places)
 
 local SPAWN_OFFSET = Vector3.new(0, 3, 0)
@@ -46,9 +47,11 @@ local function getBillboard(place: Folder): BillboardGui
 	return (place :: any).OwnerOfPlace.BillboardGui
 end
 
+-- Shows what the owner really makes a second, with their cash pass
 local function updateMoneyPerSecond(place: Folder, player: Player)
 	local label = (getBillboard(place) :: any).MoneyPerSecond
-	label.Text = `{FormatMoney(player:GetAttribute("MoneyPerSecond") or 0, 2)}/s`
+	local earning = (player:GetAttribute("MoneyPerSecond") or 0) * GamePasses.GetCashMultiplier(player)
+	label.Text = `{FormatMoney(earning, 2)}/s`
 end
 
 local function loadHeadshot(place: Folder, player: Player)
@@ -142,6 +145,9 @@ local function onPlayerAdded(player: Player)
 
 	connections[player] = {
 		player:GetAttributeChangedSignal("MoneyPerSecond"):Connect(function()
+			updateMoneyPerSecond(place, player)
+		end),
+		player:GetAttributeChangedSignal("CashMultiplier"):Connect(function()
 			updateMoneyPerSecond(place, player)
 		end),
 		player.CharacterAdded:Connect(function(character)

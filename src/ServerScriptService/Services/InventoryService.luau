@@ -9,9 +9,11 @@ local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local TutorialService = require(script.Parent.TutorialService)
 
 local InventoryChanged = ReplicatedStorage.Remotes.InventoryChanged
 local EquipItem = ReplicatedStorage.Remotes.EquipItem
@@ -371,19 +373,26 @@ function InventoryService.Start()
 	end)
 
 	EquipItem.OnServerEvent:Connect(function(player, uid)
-		if uid == nil or typeof(uid) == "string" then
+		if (uid == nil or typeof(uid) == "string") and Tutorial.Allows(player, "Equip") then
 			InventoryService.Equip(player, uid)
+			if uid ~= nil and player:GetAttribute("EquippedItem") == uid then
+				TutorialService.Complete(player, "Equip")
+			end
 		end
 	end)
 	MoveHotbarItem.OnServerEvent:Connect(function(player, uid, position)
-		if typeof(uid) == "string" and (position == nil or Hotbar.IsPosition(position)) then
+		if
+			typeof(uid) == "string"
+			and (position == nil or Hotbar.IsPosition(position))
+			and Tutorial.Allows(player, "MoveItem")
+		then
 			InventoryService.MoveInHotbar(player, uid, position)
 		end
 	end)
 	-- The backpack's Remove button, once the player confirms the items they picked
 	DeleteItems.OnServerEvent:Connect(function(player, uids)
 		local inventory = getInventory(player)
-		if not (inventory and typeof(uids) == "table") then
+		if not (inventory and typeof(uids) == "table" and Tutorial.Allows(player, "Delete")) then
 			return
 		end
 		-- No more than the player owns, so a client can't send a huge list to check

@@ -100,9 +100,9 @@ end
 
 -- A white copy of the button's shape grows out over it and fades, its fill first and then
 -- its outline, so it looks like two rings. For a button that's had Animate, which puts it in a holder
--- with its own box to grow from
-function ButtonController.Pulse(button: GuiButton)
-	local holder = button.Parent
+-- with its own box to grow from. Inside grows it from the button itself, for one that hasn't
+function ButtonController.Pulse(button: GuiButton, inside: boolean?)
+	local holder = if inside then button else button.Parent
 	if not (holder and holder:IsA("GuiObject")) then
 		return
 	end

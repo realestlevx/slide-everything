@@ -142,7 +142,7 @@ local function getSlide(): number
 			return SignUpgrades.GetValue("Slide", if typeof(level) == "number" then level else 1)
 		end
 	end
-	return 1
+	return SignUpgrades.GetValue("Slide", 1)
 end
 
 -- Written the way the drop HUD shows the multiplier. A wall that's popping keeps the multiplier the

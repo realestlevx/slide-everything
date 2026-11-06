@@ -9,6 +9,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Rainbow = require(ReplicatedStorage.Shared.Rainbow)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 
 local ButtonController = require(script.Parent.ButtonController)
 
@@ -210,6 +211,10 @@ local function isShown(name: string): boolean
 		return false
 	end
 	if menuOpen and (name == "Inventory" or DROP_VIEW_PIECES[name] or table.find(TOP_PIECES, name)) then
+		return false
+	end
+	-- The market and the floors wait for the end of the tutorial
+	if name == "BaseButtons" and not Tutorial.Allows(LocalPlayer, "TopBar") then
 		return false
 	end
 	if not dropView and (name == "BaseButtons" or name == "OutsideBaseButtons") then
@@ -440,6 +445,10 @@ function HudController.SetMenuOpen(open: boolean)
 	menuOpen = open
 	switchPieces(not open)
 	refreshTop()
+end
+
+function HudController.IsMenuOpen(): boolean
+	return menuOpen
 end
 
 -- Whether the player has left their base, which swaps the top bar's buttons for the one back to it
@@ -997,6 +1006,7 @@ function HudController.Start()
 			updateButtons()
 		end
 	end)
+	LocalPlayer:GetAttributeChangedSignal(Tutorial.ATTRIBUTE):Connect(refreshTop)
 	RunService.RenderStepped:Connect(animateMultiplier)
 	RunService.RenderStepped:Connect(animateSpeedLines)
 	RunService.RenderStepped:Connect(updateSlidingSound)

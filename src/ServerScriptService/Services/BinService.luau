@@ -1,10 +1,14 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
+
 local InventoryService = require(script.Parent.InventoryService)
 
 local BinService = {}
 
 local function onBinTriggered(player: Player)
 	local owned = InventoryService.GetEquipped(player)
-	if owned then
+	if owned and Tutorial.Allows(player, "Bin") then
 		InventoryService.Delete(player, { owned.Uid })
 	end
 end

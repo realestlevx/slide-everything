@@ -78,19 +78,21 @@ local function getTimeLevels(): { Level }
 	return levels
 end
 
--- 1x, 1.1x, 1.2x and so on up to 6x. What it's gone up by is added to every multiplier wall on the
--- slide: at 1.1x a 1.1x wall pays 1.2x. Not on the economy sheet yet, so the prices are a
--- placeholder: 25K for 1.1x, then 1.5x more each level, about 971K for 2x, 57M for 3x, 3.3B for 4x,
--- 191B for 5x and 11T for 6x. Values are made from whole tenths, like Sliding Speed's
-local SLIDE_STEPS = 50
-local SLIDE_PRICE = 25000 -- What 1.1x costs
+-- 1.1x, 1.2x, 1.3x and so on up to 6x. A multiplier wall pays its own Multiplier plus what this is over
+-- 1x, so the walls, which are all at 1x, start at 1.1x with it: the first one a player goes through pays
+-- this much. Not on the economy sheet yet, so the prices are a placeholder: 25K for 1.2x, then 1.5x more
+-- each level, about 640K for 2x, 37M for 3x, 2.1B for 4x, 123B for 5x and 7.1T for 6x. Values are made
+-- from whole tenths, like Sliding Speed's
+local SLIDE_START = 11 -- In tenths: what everyone starts at
+local SLIDE_STEPS = 49
+local SLIDE_PRICE = 25000 -- What the first step up costs
 local SLIDE_PRICE_GROWTH = 1.5
 
 local function getSlideLevels(): { Level }
 	local prices = getPrices({ SLIDE_PRICE }, SLIDE_PRICE_GROWTH, SLIDE_STEPS)
-	local levels: { Level } = { { Value = 1 } }
+	local levels: { Level } = { { Value = SLIDE_START / 10 } }
 	for step = 1, SLIDE_STEPS do
-		table.insert(levels, { Value = (10 + step) / 10, Price = prices[step] })
+		table.insert(levels, { Value = (SLIDE_START + step) / 10, Price = prices[step] })
 	end
 	return levels
 end

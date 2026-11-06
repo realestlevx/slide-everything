@@ -6,6 +6,7 @@ local SocialService = game:GetService("SocialService")
 
 local LocalHide = require(ReplicatedStorage.Shared.LocalHide)
 local Places = require(ReplicatedStorage.Shared.Places)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -50,7 +51,7 @@ function FeedbackController.Start()
 
 	ProximityPromptService.PromptTriggered:Connect(function(prompt: ProximityPrompt)
 		local part = prompt.Parent
-		if not part then
+		if not part or not Tutorial.Allows(LocalPlayer, "Feedback") then
 			return
 		end
 

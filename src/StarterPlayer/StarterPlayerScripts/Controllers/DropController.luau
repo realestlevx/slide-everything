@@ -7,10 +7,12 @@ local TweenService = game:GetService("TweenService")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
 local Floors = require(ReplicatedStorage.Shared.Floors)
+local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Items = require(ReplicatedStorage.Shared.Items)
 local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local CollectController = require(script.Parent.CollectController)
@@ -227,6 +229,7 @@ type Drop = {
 	Direction: Vector3, -- Which way the slide runs, across the ground
 	Ending: boolean,
 	Speed: number, -- The owner's Sliding Speed upgrade, which multiplies the pay
+	CashMultiplier: number, -- What their cash pass multiplies the pay by, as it was when the drop started
 	SlideSpeed: number, -- Studs per second items are held to down the slide
 	Slide: number, -- The owner's Slide upgrade, which raises every wall's multiplier
 	Focus: Vector3?, -- What the camera's following, on the slide's middle line. Nil until the first frame
@@ -317,7 +320,7 @@ local function measure(current: Drop, dropped: DroppedItem)
 	dropped.Reached = math.max(dropped.Reached, along)
 	local paidDistance, multiplier, passed = Drops.Measure(dropped.Gates, dropped.Reached)
 	dropped.Multiplier, dropped.Passed = multiplier, passed
-	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, current.Speed)
+	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, current.Speed, current.CashMultiplier)
 end
 
 -- What the drop has made so far, how far it's got, the best multiplier it's reached, the time it has
@@ -900,7 +903,7 @@ end
 -- their items fall through the opened floor and the camera follows them down the slide. The server
 -- makes the same checks, so it only pays for drops it would have allowed
 local function startDrop(place: Folder, prompt: ProximityPrompt)
-	if drop or place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId then
+	if drop or place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or not Tutorial.Allows(LocalPlayer, "Drop") then
 		return
 	end
 	if os.clock() - lastDropAt < Drops.COOLDOWN then
@@ -982,6 +985,7 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Direction = direction,
 		Ending = false,
 		Speed = speed,
+		CashMultiplier = GamePasses.GetCashMultiplier(LocalPlayer),
 		SlideSpeed = Drops.GetSlideSpeed(speed),
 		Slide = getUpgrade(place, "Slide"),
 		Focus = nil,

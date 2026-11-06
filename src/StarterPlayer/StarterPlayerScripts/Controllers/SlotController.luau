@@ -13,6 +13,7 @@ local ItemModel = require(ReplicatedStorage.Shared.ItemModel)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local ButtonController = require(script.Parent.ButtonController)
@@ -20,6 +21,7 @@ local FloatController = require(script.Parent.FloatController)
 local InventoryController = require(script.Parent.InventoryController)
 local ParticleQualityController = require(script.Parent.ParticleQualityController)
 local PromptController = require(script.Parent.PromptController)
+local TopTextController = require(script.Parent.TopTextController)
 
 local RemoveFromSlot = ReplicatedStorage.Remotes.RemoveFromSlot
 local IncomeTick = ReplicatedStorage.Remotes.IncomeTick
@@ -170,7 +172,7 @@ local function refresh(slot: Model)
 
 	local billboard = billboards[slot]
 	if billboard then
-		local buttons = (billboard :: any).Main.Buttons :: Frame
+		local buttons = (billboard :: any).Main.Buttons
 		billboard.Enabled = item ~= nil
 		if item then
 			showStats(billboard, item, getLevel(slot))
@@ -190,7 +192,9 @@ local function refresh(slot: Model)
 	-- Only the owner is sold the pass from their own place's slots, and only until they have it
 	local passBillboard = passBillboards[slot]
 	if passBillboard then
-		passBillboard.Enabled = selling and place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+		passBillboard.Enabled = selling
+			and place:GetAttribute("OwnerUserId") == LocalPlayer.UserId
+			and Tutorial.Allows(LocalPlayer, "Passes")
 	end
 
 	if prompt then
@@ -249,11 +253,15 @@ local function copyBillboard(slot: Model, original: BillboardGui)
 	local buttons = (billboard :: any).Main.Buttons
 	local removeButton = buttons.RemoveButton :: ImageButton
 	removeButton.Activated:Connect(function()
-		RemoveFromSlot:FireServer(slot)
+		if TopTextController.CheckTutorial("Remove") then
+			RemoveFromSlot:FireServer(slot)
+		end
 	end)
 	local upgradeButton = buttons.UpgradeButton :: ImageButton
 	upgradeButton.Activated:Connect(function()
-		UpgradeSlot:FireServer(slot)
+		if TopTextController.CheckTutorial("UpgradeItem") then
+			UpgradeSlot:FireServer(slot)
+		end
 	end)
 	ButtonController.Animate(removeButton)
 	ButtonController.Animate(upgradeButton)
@@ -558,7 +566,7 @@ local function onPromptTriggered(prompt: ProximityPrompt)
 	if not (slot and place and place:GetAttribute("OwnerUserId") == LocalPlayer.UserId) then
 		return
 	end
-	if placing[slot] or getItem(slot) or slot:GetAttribute("Unlocked") ~= true then
+	if placing[slot] or getItem(slot) or slot:GetAttribute("Unlocked") ~= true or not Tutorial.Allows(LocalPlayer, "Place") then
 		return
 	end
 	local character = LocalPlayer.Character
@@ -653,6 +661,12 @@ function SlotController.SetFaded(place: Folder, faded: boolean)
 	end
 end
 
+-- The Upgrade button on the slot's billboard, if the billboard has streamed in
+function SlotController.GetUpgradeButton(slot: Model): GuiButton?
+	local billboard = billboards[slot]
+	return billboard and (billboard :: any).Main.Buttons.UpgradeButtonHolder.UpgradeButton
+end
+
 function SlotController.Start()
 	for _, place in Places.GetAll() do
 		for _, descendant in place:GetDescendants() do
@@ -677,6 +691,7 @@ function SlotController.Start()
 
 	-- Picking an item up or putting it away shows or hides the place prompts
 	LocalPlayer:GetAttributeChangedSignal("EquippedItem"):Connect(refreshAll)
+	LocalPlayer:GetAttributeChangedSignal(Tutorial.ATTRIBUTE):Connect(refreshAll)
 	ProximityPromptService.PromptTriggered:Connect(onPromptTriggered)
 
 	UpgradeResult.OnClientEvent:Connect(function(slot: Model?, upgraded: boolean)

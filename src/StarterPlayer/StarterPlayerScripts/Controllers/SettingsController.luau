@@ -6,6 +6,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Icon = require(ReplicatedStorage.Packages.TopbarPlus)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Volumes = require(ReplicatedStorage.Shared.Volumes)
 
 local ButtonController = require(script.Parent.ButtonController)
@@ -541,6 +542,17 @@ local function createIcon()
 		:bindEvent("toggled", function(_, isSelected: boolean)
 			setOpen(isSelected)
 		end)
+
+	-- Gone through the tutorial
+	local function refreshIcon()
+		local allowed = Tutorial.Allows(LocalPlayer, "Settings")
+		if not allowed then
+			icon:deselect()
+		end
+		icon:setEnabled(allowed)
+	end
+	LocalPlayer:GetAttributeChangedSignal(Tutorial.ATTRIBUTE):Connect(refreshIcon)
+	refreshIcon()
 end
 
 -- As the player left it last time, once their saved data's in, and off until then

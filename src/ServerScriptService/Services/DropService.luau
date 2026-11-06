@@ -2,15 +2,18 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Drops = require(ReplicatedStorage.Shared.Drops)
+local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Gems = require(ReplicatedStorage.Shared.Gems)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local InventoryService = require(script.Parent.InventoryService)
 local PlaceService = require(script.Parent.PlaceService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local SignUpgradeService = require(script.Parent.SignUpgradeService)
+local TutorialService = require(script.Parent.TutorialService)
 
 local DropResult = ReplicatedStorage.Remotes.DropResult
 local GemsFound = ReplicatedStorage.Remotes.GemsFound
@@ -41,6 +44,7 @@ type Drop = {
 	-- The owner's Sliding Speed and Sliding Time when it started, so buying more mid-drop doesn't count
 	Speed: number,
 	Time: number,
+	CashMultiplier: number, -- Their cash pass's when it started, as buying one mid-drop doesn't count either
 	-- Down the place's slide, nearest first, at the owner's Slide upgrade when it started
 	Walls: { Drops.Wall },
 	Items: { [string]: DroppedItem }, -- Slot key -> what was in it
@@ -70,7 +74,7 @@ end
 -- The client runs the drop itself and reports how far each item got
 local function onDrop(place: Folder, player: Player)
 	local data = PlayerDataService.Get(player)
-	if place:GetAttribute("OwnerUserId") ~= player.UserId or not data then
+	if place:GetAttribute("OwnerUserId") ~= player.UserId or not data or not Tutorial.Allows(player, "Drop") then
 		return
 	end
 	local last = drops[player]
@@ -108,6 +112,7 @@ local function onDrop(place: Folder, player: Player)
 		StartedAt = os.clock(),
 		Speed = SignUpgradeService.GetValue(player, "SlideSpeed"),
 		Time = SignUpgradeService.GetValue(player, "SlideTime"),
+		CashMultiplier = GamePasses.GetCashMultiplier(player),
 		Walls = slideWalls,
 		Items = dropped,
 		FindsGems = not lastGemDrop
@@ -164,7 +169,7 @@ local function onResult(player: Player, slotKey: any, distance: any, alongs: any
 
 	local reached = math.min(distance, Drops.GetSlideSpeed(drop.Speed) * SPEED_SLACK * drop.Time)
 	local paidDistance = Drops.Measure(getGates(drop, alongs), reached)
-	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.Speed)
+	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.Speed, drop.CashMultiplier)
 	data.CollectCash += pay
 	if drop.FindsGems then
 		gemChances[player] = (gemChances[player] or 0) + 1
@@ -176,6 +181,11 @@ local function onResult(player: Player, slotKey: any, distance: any, alongs: any
 	local place = PlaceService.GetPlace(player)
 	if place then
 		updatePlace(place)
+	end
+	-- Exiting a drop straight away can pay nothing, which leaves no cash for the tutorial's next step
+	-- to collect, as the prompt only shows with some on the pad. They go again instead
+	if data.CollectCash > 0 then
+		TutorialService.Complete(player, "Drop")
 	end
 end
 
@@ -200,7 +210,7 @@ end
 -- may find them some gems
 local function onCollect(place: Folder, player: Player)
 	local data = PlayerDataService.Get(player)
-	if place:GetAttribute("OwnerUserId") ~= player.UserId or not data then
+	if place:GetAttribute("OwnerUserId") ~= player.UserId or not data or not Tutorial.Allows(player, "Collect") then
 		return
 	end
 	if data.CollectCash <= 0 and #data.CollectItems == 0 then
@@ -212,6 +222,7 @@ local function onCollect(place: Folder, player: Player)
 	table.clear(data.CollectItems)
 	updatePlace(place)
 	findGems(player, data)
+	TutorialService.Complete(player, "Collect")
 end
 
 local function findPrompt(place: Folder, name: string): ProximityPrompt?

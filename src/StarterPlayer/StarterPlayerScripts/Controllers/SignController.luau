@@ -7,8 +7,10 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local LocalHide = require(ReplicatedStorage.Shared.LocalHide)
 local Places = require(ReplicatedStorage.Shared.Places)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 
 local ButtonController = require(script.Parent.ButtonController)
+local TopTextController = require(script.Parent.TopTextController)
 
 local BuySlot = ReplicatedStorage.Remotes.BuySlot
 local BuySlotResult = ReplicatedStorage.Remotes.BuySlotResult
@@ -130,11 +132,12 @@ local function setLit(sign: Sign, lit: boolean)
 	tween:Play()
 end
 
--- On while the place is this player's and their cash covers the next price of any panel on the sign
+-- On while the place is this player's and their cash covers the next price of any panel on the sign.
+-- Off through the tutorial, which lights up just the sign it wants them at (see TutorialController)
 local function refreshHighlight(sign: Sign)
 	local money = LocalPlayer:GetAttribute("Money")
 	local affordable = false
-	if typeof(money) == "number" and isOwner(sign.Place) then
+	if typeof(money) == "number" and isOwner(sign.Place) and not Tutorial.GetStep(LocalPlayer) then
 		for _, panel in sign.Panels do
 			if panel.NextPrice and money >= panel.NextPrice then
 				affordable = true
@@ -289,7 +292,7 @@ local function copySign(place: Folder, original: SurfaceGui)
 
 		if button then
 			button.Activated:Connect(function()
-				if isOwner(place) then
+				if isOwner(place) and TopTextController.CheckTutorial(name) then
 					buy(place, name)
 				end
 			end)
@@ -369,6 +372,18 @@ local function onResult(name: string, bought: boolean)
 	end
 end
 
+-- The panel's button on this player's own sign, the whole sign it's on and the part its gui is on.
+-- Nil while the sign hasn't streamed in. The panel is "Slots" or an upgrade's name
+function SignController.FindPanel(name: string): (GuiButton?, Instance?, BasePart?)
+	for _, sign in signs do
+		local panel = sign.Panels[name]
+		if panel and panel.Button and isOwner(sign.Place) then
+			return panel.Button, sign.Highlight.Parent, sign.Gui.Adornee :: BasePart?
+		end
+	end
+	return nil, nil, nil
+end
+
 function SignController.Start()
 	local attributes = { "SlotsUnlocked", "NextSlotPrice", "NextFloor" }
 	for name in SignUpgrades.Upgrades do
@@ -393,11 +408,13 @@ function SignController.Start()
 		end)
 	end
 
-	LocalPlayer:GetAttributeChangedSignal("Money"):Connect(function()
+	local function refreshHighlights()
 		for _, sign in signs do
 			refreshHighlight(sign)
 		end
-	end)
+	end
+	LocalPlayer:GetAttributeChangedSignal("Money"):Connect(refreshHighlights)
+	LocalPlayer:GetAttributeChangedSignal(Tutorial.ATTRIBUTE):Connect(refreshHighlights)
 
 	BuySlotResult.OnClientEvent:Connect(function(bought: boolean)
 		onResult(SLOTS_PANEL, bought)

@@ -9,10 +9,12 @@ local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Hotbar = require(ReplicatedStorage.Shared.Hotbar)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Upgrades = require(ReplicatedStorage.Shared.Upgrades)
 
 local ButtonController = require(script.Parent.ButtonController)
 local HudController = require(script.Parent.HudController)
+local TopTextController = require(script.Parent.TopTextController)
 
 local InventoryChanged = ReplicatedStorage.Remotes.InventoryChanged
 local EquipItem = ReplicatedStorage.Remotes.EquipItem
@@ -155,7 +157,14 @@ end
 
 -- The server checks the item is owned and sets EquippedItem, which the buttons then follow
 local function equip(uid: string?)
-	EquipItem:FireServer(uid)
+	if TopTextController.CheckTutorial("Equip") then
+		EquipItem:FireServer(uid)
+	end
+end
+
+-- The button at that position in the hotbar, empty or not
+function InventoryController.GetHotbarButton(position: number): ImageButton?
+	return hotbarButtons[position]
 end
 
 -- Equips the item, or puts it away if it's already out
@@ -296,6 +305,9 @@ end
 -- backpack with nil. The items then close up any gap, so they're numbered from 1, and an item put
 -- past the last one goes on the end. Shown straight away; the server does the same and sends it back
 local function moveInHotbar(uid: string, position: number?)
+	if not TopTextController.CheckTutorial("MoveItem") then
+		return
+	end
 	local from = getHotbarPosition(uid)
 	if position then
 		local other = hotbar[position]
@@ -574,6 +586,9 @@ end
 -- The first click turns it into Confirm, so the player can pick the items to delete. The next
 -- deletes them, or just turns it back if none were picked
 local function onRemove()
+	if not TopTextController.CheckTutorial("Delete") then
+		return
+	end
 	if not deleting then
 		setDeleting(true)
 		return
@@ -713,7 +728,9 @@ local function bindBackpack(frame: Frame)
 	removeButton.Activated:Connect(onRemove)
 	-- The server picks the items and fills the slots (see SlotService)
 	equipBestButton.Activated:Connect(function()
-		EquipBest:FireServer()
+		if TopTextController.CheckTutorial("EquipBest") then
+			EquipBest:FireServer()
+		end
 	end)
 	sortButton.Activated:Connect(function()
 		options.Visible = not options.Visible
@@ -758,13 +775,27 @@ local function createIcon()
 			setOpen(isSelected)
 		end)
 
-	-- Out of the way while the player's items drop, along with the hotbar
-	HudController.DropViewChanged:Connect(function(on: boolean)
-		if on then
+	-- Out of the way while the player's items drop, along with the hotbar. Through the tutorial it's
+	-- gone too, and locked, so its key doesn't open the backpack either
+	local dropView = false
+	local function refreshIcon()
+		local allowed = Tutorial.Allows(LocalPlayer, "Backpack")
+		if dropView or not allowed then
 			icon:deselect()
 		end
-		icon:setEnabled(not on)
+		if allowed then
+			icon:unlock()
+		else
+			icon:lock()
+		end
+		icon:setEnabled(allowed and not dropView)
+	end
+	HudController.DropViewChanged:Connect(function(on: boolean)
+		dropView = on
+		refreshIcon()
 	end)
+	LocalPlayer:GetAttributeChangedSignal(Tutorial.ATTRIBUTE):Connect(refreshIcon)
+	refreshIcon()
 end
 
 function InventoryController.Start()

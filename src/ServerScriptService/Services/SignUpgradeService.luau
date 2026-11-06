@@ -3,10 +3,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Places = require(ReplicatedStorage.Shared.Places)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 
 local InventoryService = require(script.Parent.InventoryService)
 local PlaceService = require(script.Parent.PlaceService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local TutorialService = require(script.Parent.TutorialService)
 
 local BuyUpgrade = ReplicatedStorage.Remotes.BuyUpgrade
 local BuyUpgradeResult = ReplicatedStorage.Remotes.BuyUpgradeResult
@@ -53,7 +55,7 @@ end
 local function onSetLuck(player: Player, luck: any)
 	local data = PlayerDataService.Get(player)
 	-- NaN fails the comparison, so it's turned away too
-	if not (data and typeof(luck) == "number" and luck >= 1) then
+	if not (data and typeof(luck) == "number" and luck >= 1 and Tutorial.Allows(player, "SetLuck")) then
 		return
 	end
 	-- All the way up is kept as nothing set, so it goes on following the upgrade
@@ -82,7 +84,7 @@ local function onBuy(player: Player, place: any, name: any)
 		return
 	end
 	local upgrade = typeof(name) == "string" and SignUpgrades.Upgrades[name]
-	if not upgrade then
+	if not (upgrade and Tutorial.Allows(player, name)) then
 		return
 	end
 	local buys = lastBuys[player] or {}
@@ -116,6 +118,7 @@ local function onBuy(player: Player, place: any, name: any)
 	end
 	-- Same as for slots, and more luck takes the cheapest items out of the rolls
 	InventoryService.EnsureCanStart(player)
+	TutorialService.Complete(player, name)
 end
 
 function SignUpgradeService.Start()

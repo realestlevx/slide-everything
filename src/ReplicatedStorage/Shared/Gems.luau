@@ -10,7 +10,8 @@ local Gems = {
 	MIN_FIND = 1, -- Found however little the player earns
 }
 
--- How many gems an item finds, when it finds any, for a player earning this much a second
+-- How many gems an item finds, when it finds any, for a player earning this much a second. That's
+-- before any cash pass, which is for cash, so it doesn't find them more gems
 function Gems.GetFind(moneyPerSecond: number): number
 	return math.max(math.round(math.max(moneyPerSecond, 0) ^ (1 / Gems.INCOME_ROOT)), Gems.MIN_FIND)
 end

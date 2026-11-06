@@ -7,6 +7,7 @@ local Floors = require(ReplicatedStorage.Shared.Floors)
 local Places = require(ReplicatedStorage.Shared.Places)
 
 local HudController = require(script.Parent.HudController)
+local TopTextController = require(script.Parent.TopTextController)
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -49,6 +50,7 @@ type Float = {
 }
 
 local travelling = false
+local dropView = false
 local floats: { [BasePart]: Float } = {} -- Each kill part -> what floats with it
 
 local BaseController = {}
@@ -129,6 +131,16 @@ end
 local function goToMarket()
 	local market = workspace:FindFirstChild(MARKET_NAME)
 	travelTo(market and market:GetAttribute("SpawnCFrame"))
+end
+
+-- The tutorial keeps the player at their base. Through a drop their character follows the items on
+-- this client, and it's back before the drop ends, so that doesn't count
+local function keepInBase()
+	local place = getOwnPlace()
+	local root = getRoot()
+	if place and root and not dropView and not Places.IsInBase(place, root.Position) and not TopTextController.CheckTutorial("LeaveBase") then
+		task.spawn(goHome)
+	end
 end
 
 -- Where the player goes on the floor, or nil if it isn't built or its spawn hasn't streamed in
@@ -224,6 +236,9 @@ function BaseController.Start()
 		task.spawn(goToMarket)
 	end)
 	HudController.FloorRequested:Connect(stepFloor)
+	HudController.DropViewChanged:Connect(function(on: boolean)
+		dropView = on
+	end)
 
 	-- Kill parts may stream in and out, and come back as new parts
 	for _, descendant in workspace:GetDescendants() do
@@ -235,6 +250,7 @@ function BaseController.Start()
 	task.spawn(function()
 		while true do
 			checkOutside()
+			keepInBase()
 			task.wait(CHECK_INTERVAL)
 		end
 	end)

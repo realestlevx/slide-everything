@@ -43,7 +43,9 @@ Admin: $1.5Qi (1 in 350B) 15B/s
 
 Limited: 50% - 200% (depends on chest / unlock method)
 
-
+Zones: Earth (grassy, forest, swamp, desert, crystal caves)
+	Nether
+	
 Upgrades:
 Roll Slots: $800 > $10k > $250k > $2M > $51M >
 Slot upgrade $100 > $300 > $1k > 2.5k > 7k > 18k > 50k
@@ -68,7 +70,7 @@ w4 Equip Item
 - dont let the player do anything else if the tutorial isnt finished yet.
 
 Offline earnings:
-0.5x of the total $/s, has a gamepass to 4x it for 25R$
+0.5x of the total $/s, has a gamepass to 4x it for 40R$
 
 Pop ups:
 Admin abuse

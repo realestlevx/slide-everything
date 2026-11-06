@@ -5,10 +5,12 @@ local ServerStorage = game:GetService("ServerStorage")
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 
 local InventoryService = require(script.Parent.InventoryService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local SignUpgradeService = require(script.Parent.SignUpgradeService)
+local TutorialService = require(script.Parent.TutorialService)
 
 local RollResult = ReplicatedStorage.Remotes.RollResult
 local BuyResult = ReplicatedStorage.Remotes.BuyResult
@@ -132,7 +134,7 @@ end
 -- One pull of the lever rolls every stand the owner has, each for an item of its own
 local function onRollTriggered(place: Folder, player: Player)
 	-- Prompts are hidden for non-owners on the client, but never trust that
-	if place:GetAttribute("OwnerUserId") ~= player.UserId or rolling[place] then
+	if place:GetAttribute("OwnerUserId") ~= player.UserId or rolling[place] or not Tutorial.Allows(player, "Roll") then
 		return
 	end
 
@@ -141,10 +143,11 @@ local function onRollTriggered(place: Folder, player: Player)
 	rolling[place] = true
 
 	local luck = SignUpgradeService.GetLuck(player)
+	local inTutorial = Tutorial.GetStep(player) ~= nil
 	local picks: { [number]: Items.Item } = {}
 	local pickIds: { [string]: string } = {} -- Text keys, so the remote and the save keep them
 	for _, number in getRollStands(place) do
-		local item = Rolling.Pick(rng, luck)
+		local item = if inTutorial then Items[Tutorial.FIRST_ROLL] else Rolling.Pick(rng, luck)
 		picks[number] = item
 		pickIds[tostring(number)] = item.Id
 	end
@@ -168,6 +171,7 @@ local function onRollTriggered(place: Folder, player: Player)
 		for number, item in picks do
 			finishRoll(place, number, item)
 		end
+		TutorialService.Complete(player, "Roll")
 	end)
 end
 
@@ -176,7 +180,7 @@ local function onBuyTriggered(place: Folder, number: number, player: Player)
 	local stand = stands[place][number]
 	local item = landed[stand]
 	local data = PlayerDataService.Get(player)
-	if place:GetAttribute("OwnerUserId") ~= player.UserId or not (item and data) then
+	if place:GetAttribute("OwnerUserId") ~= player.UserId or not (item and data and Tutorial.Allows(player, "BuyItem")) then
 		return
 	end
 
@@ -196,6 +200,7 @@ local function onBuyTriggered(place: Folder, number: number, player: Player)
 	data.LastRolls[tostring(number)] = nil
 	clearStand(place, number)
 	BuyResult:FireClient(player, place, number, true)
+	TutorialService.Complete(player, "BuyItem")
 end
 
 -- The owner's unbought rolls from last time go back on their stands. Needs both the place and the

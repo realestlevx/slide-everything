@@ -1,16 +1,22 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local ProfileStore = require(ServerScriptService.ServerPackages.ProfileStore)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Volumes = require(ReplicatedStorage.Shared.Volumes)
+
+-- On, playtests in Studio start as a brand new player on a throwaway profile, to go through the
+-- tutorial without touching a real save. Does nothing outside Studio
+local TEST_AS_NEW_PLAYER = false
 
 local PROFILE_TEMPLATE = {
 	Money = 1000, -- Starting money
 	Gems = 0,
-	MoneyPerSecond = 0,
+	MoneyPerSecond = 0, -- What their slots earn, before any cash pass; see Gems.GetFind
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
 	Slots = {} :: { [string]: string }, -- Slot key (see Places.GetSlotKey) -> Uid of the inventory item placed in it
 	-- Hotbar position (as text, 1 to Hotbar.SIZE) -> Uid of the item kept there. The rest of the items
@@ -30,11 +36,17 @@ local PROFILE_TEMPLATE = {
 	-- missing; set with the settings menu's sliders
 	Volumes = {} :: { [string]: number },
 	FastMode = false, -- Set with the settings menu's Fast Mode button
+	-- The step of the tutorial they're on; see Tutorial. New saves start at the first, and saves from
+	-- before there was a tutorial skip it (see onPlayerAdded)
+	TutorialStep = 1,
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
 
 local PlayerStore = ProfileStore.New("PlayerStore", PROFILE_TEMPLATE)
+if TEST_AS_NEW_PLAYER and RunService:IsStudio() then
+	PlayerStore = PlayerStore.Mock
+end
 
 local Profiles: { [Player]: typeof(PlayerStore:StartSessionAsync("")) } = {}
 
@@ -78,9 +90,19 @@ local function onPlayerAdded(player: Player)
 	end
 
 	profile:AddUserId(player.UserId) -- GDPR compliance
-	profile:Reconcile() -- Fill in missing template keys
-	-- Saves from before there were several roll stands kept one roll, which was the first stand's
+	-- Only a brand new save has a step before it's reconciled, as those are copied from the template.
+	-- A save without one is from before there was a tutorial, and that player already knows the game
 	local data = profile.Data :: any
+	if data.TutorialStep == nil then
+		data.TutorialStep = Tutorial.DONE
+	end
+	profile:Reconcile() -- Fill in missing template keys
+	-- Floor 1's first slot used to come free, so saves from then don't have it down as bought, and would
+	-- lose it. Anyone past the tutorial owns it: they bought it there, or had it from before
+	if data.TutorialStep == Tutorial.DONE then
+		data.BoughtSlots["1"] = true
+	end
+	-- Saves from before there were several roll stands kept one roll, which was the first stand's
 	if data.LastRoll then
 		data.LastRolls["1"] = data.LastRolls["1"] or data.LastRoll
 		data.LastRoll = nil
@@ -103,6 +125,7 @@ local function onPlayerAdded(player: Player)
 			player:SetAttribute(`{name}Volume`, profile.Data.Volumes[name] or 1)
 		end
 		player:SetAttribute("FastMode", profile.Data.FastMode)
+		player:SetAttribute(Tutorial.ATTRIBUTE, profile.Data.TutorialStep)
 		loaded:Fire(player)
 	else
 		profile:EndSession()

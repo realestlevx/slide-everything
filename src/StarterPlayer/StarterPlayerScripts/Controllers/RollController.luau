@@ -10,6 +10,7 @@ local Places = require(ReplicatedStorage.Shared.Places)
 local Rarities = require(ReplicatedStorage.Shared.Rarities)
 local Rolling = require(ReplicatedStorage.Shared.Rolling)
 local SignUpgrades = require(ReplicatedStorage.Shared.SignUpgrades)
+local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 
 local FloatController = require(script.Parent.FloatController)
 local ParticleQualityController = require(script.Parent.ParticleQualityController)
@@ -456,7 +457,7 @@ end
 -- Starts the moment the prompt fires instead of waiting a round trip for the server.
 -- Mirrors the server's checks so it only spins for rolls the server will accept
 local function startRoll(place: Folder, prompt: ProximityPrompt)
-	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] then
+	if place:GetAttribute("OwnerUserId") ~= LocalPlayer.UserId or spinning[place] or not Tutorial.Allows(LocalPlayer, "Roll") then
 		return
 	end
 
@@ -510,6 +511,11 @@ local function onDescendantAdded(place: Folder, descendant: Instance)
 			highlightServerCopy(place, number)
 		end
 	end
+end
+
+-- Whether the player's roll is spinning. Only the owner of a place spins it here
+function RollController.IsSpinning(): boolean
+	return next(spinning) ~= nil
 end
 
 function RollController.Start()
