@@ -6,16 +6,32 @@ export type Step = {
 	Text: string, -- Said across the top of the screen, so keep it short (see TutorialController)
 }
 
-local COLOR = Color3.fromRGB(255, 221, 64) -- The beam and the glow, and the words picked out in the steps
+local COLOR = Color3.fromRGB(255, 221, 64) -- The beam and the glow
+local COUNT_COLOR = Color3.fromRGB(200, 200, 200) -- How far along they are, quiet beside the word picked out
+
+-- The words picked out in the steps, each in its own color. Not red, which is for LOCKED_TEXT. The blues,
+-- purples and pinks are kept light, as they'd sink into the black outline beside the greens otherwise
+local KEY_COLORS: { [string]: Color3 } = {
+	roll = Color3.fromRGB(205, 150, 255),
+	item = Color3.fromRGB(255, 140, 175),
+	slot = Color3.fromRGB(90, 190, 255),
+	hotbar = Color3.fromRGB(70, 230, 245),
+	upgrade = Color3.fromRGB(255, 130, 235),
+	drop = Color3.fromRGB(255, 165, 60),
+	collect = Color3.fromRGB(96, 253, 29), -- The green cash is shown in elsewhere
+	luck = Color3.fromRGB(70, 240, 165),
+	["sliding speed"] = Color3.fromRGB(160, 175, 255),
+}
 
 -- Picks a word out in a step's text, which shows as rich text
 local function key(word: string): string
-	return `<font color="#{COLOR:ToHex()}">{word}</font>`
+	return `<font color="#{KEY_COLORS[word:lower()]:ToHex()}">{word}</font>`
 end
 
 local Tutorial = {
 	ATTRIBUTE = "TutorialStep",
 	COLOR = COLOR,
+	COUNT_COLOR = COUNT_COLOR,
 	-- The saved step once it's over. Not just a step past the last, so steps added later aren't given
 	-- to players who already finished
 	DONE = 0,

@@ -47,7 +47,7 @@ local SLOT_ITEM_NAME = "SlotItem"
 local ITEM_PHYSICS = PhysicalProperties.new(0.7, 0.05, 0.2, 100, 1)
 -- Studs per second sideways while the player steers, times their Sliding Speed upgrade and
 -- STEER_MULTIPLIER, so a faster pack cuts across more sharply and still makes the gates that come at
--- it sooner: 22.5 at 1x, 67.5 at 3x and 112.5 at 5x. The pack's pull grows just with the slide speed,
+-- it sooner: 22.5 at 1x, 112.5 at 5x and 225 at 10x. The pack's pull grows just with the slide speed,
 -- so it holds together just as tightly however fast it slides
 local STEER_SPEED = 15
 local STEER_MULTIPLIER = 1.5

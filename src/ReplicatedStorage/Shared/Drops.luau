@@ -14,7 +14,8 @@ local Drops = {
 	MAX_PILE = 50, -- Finished items shown piled on the collect pad. Older ones still count, just unseen
 	-- Studs per second items slide at, before any Sliding Speed upgrade. The upgrade raises it by
 	-- SPEED_SHARE of its own rise, so there's still time to steer, and each stud pays the rest: 3x
-	-- slides at 2x, and each stud pays 1.5x; 5x slides at 3x, and each stud pays 1.67x
+	-- slides at 2x, and each stud pays 1.5x; 5x slides at 3x, and each stud pays 1.67x; 10x slides at
+	-- 5.5x, and each stud pays 1.82x
 	SLIDE_SPEED = 30,
 	SPEED_SHARE = 0.5,
 	MULTIPLIER_ATTRIBUTE = "Multiplier", -- On the walls across the slide

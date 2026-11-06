@@ -17,7 +17,7 @@ local MESSAGE_NAME = "Message" -- A copy, so it's never mistaken for the templat
 
 local FADE_IN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_OUT_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local FLASH_TIME = 2.5 -- Seconds a flashed message lasts, counting its fades, before what's wanted comes back
+local FLASH_TIME = 1.25 -- Seconds a flashed message lasts, counting its fades, before what's wanted comes back
 
 -- The properties that fade, by the classes that have them. Each fades between what it's set to in
 -- Studio and fully see-through

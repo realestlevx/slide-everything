@@ -6,12 +6,16 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local ProfileStore = require(ServerScriptService.ServerPackages.ProfileStore)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
 local Items = require(ReplicatedStorage.Shared.Items)
+local OfflineEarnings = require(ReplicatedStorage.Shared.OfflineEarnings)
 local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Volumes = require(ReplicatedStorage.Shared.Volumes)
 
 -- On, playtests in Studio start as a brand new player on a throwaway profile, to go through the
 -- tutorial without touching a real save. Does nothing outside Studio
-local TEST_AS_NEW_PLAYER = false
+local TEST_AS_NEW_PLAYER = true
+
+local PURCHASE_IDS_KEPT = 100 -- Developer product purchases remembered, newest kept
+local PURCHASE_SAVE_RETRY_DELAY = 10 -- Seconds before trying again to save a purchase that didn't get saved
 
 local PROFILE_TEMPLATE = {
 	Money = 1000, -- Starting money
@@ -39,6 +43,11 @@ local PROFILE_TEMPLATE = {
 	-- The step of the tutorial they're on; see Tutorial. New saves start at the first, and saves from
 	-- before there was a tutorial skip it (see onPlayerAdded)
 	TutorialStep = 1,
+	-- When their data was last saved, which their time away is counted from. Missing until it first is
+	LastOnline = nil :: number?,
+	OfflineCash = 0, -- Earned while they were away and not taken yet, before any cash pass; see OfflineEarnings
+	-- The latest developer product purchases they've been given, so one Roblox sends again isn't given twice
+	PurchaseIds = {} :: { string },
 }
 
 export type Data = typeof(PROFILE_TEMPLATE)
@@ -107,6 +116,15 @@ local function onPlayerAdded(player: Player)
 		data.LastRolls["1"] = data.LastRolls["1"] or data.LastRoll
 		data.LastRoll = nil
 	end
+	-- Worked out here, from what they earned as they left, before anything can change it or a purchase
+	-- can come in to multiply it
+	if data.LastOnline and data.TutorialStep == Tutorial.DONE then
+		data.OfflineCash += OfflineEarnings.GetEarned(os.time() - data.LastOnline, data.MoneyPerSecond)
+	end
+	-- Saved as they leave and every few minutes before, so a crash doesn't lose them much time away
+	profile.OnSave:Connect(function()
+		data.LastOnline = os.time()
+	end)
 
 	profile.OnSessionEnd:Connect(function()
 		Profiles[player] = nil
@@ -126,6 +144,7 @@ local function onPlayerAdded(player: Player)
 		end
 		player:SetAttribute("FastMode", profile.Data.FastMode)
 		player:SetAttribute(Tutorial.ATTRIBUTE, profile.Data.TutorialStep)
+		player:SetAttribute(OfflineEarnings.ATTRIBUTE, profile.Data.OfflineCash)
 		loaded:Fire(player)
 	else
 		profile:EndSession()
@@ -175,6 +194,44 @@ function PlayerDataService.SetMoneyPerSecond(player: Player, amount: number)
 
 	data.MoneyPerSecond = amount
 	player:SetAttribute("MoneyPerSecond", amount)
+end
+
+-- Gives out a developer product purchase and waits for it to be saved, so it's only finished with
+-- Roblox once a crash can't lose it. The purchase is saved along with what it gave, so if Roblox sends
+-- it again it's not given twice. Grant says whether it could be given; if not, nothing's kept. Returns
+-- whether it's been given and saved
+function PlayerDataService.GrantPurchaseAsync(player: Player, purchaseId: string, grant: () -> boolean): boolean
+	local profile = Profiles[player]
+	if not (profile and profile:IsActive()) then
+		return false
+	end
+
+	local purchaseIds = profile.Data.PurchaseIds
+	if not table.find(purchaseIds, purchaseId) then
+		if not grant() then
+			return false
+		end
+		while #purchaseIds >= PURCHASE_IDS_KEPT do
+			table.remove(purchaseIds, 1)
+		end
+		table.insert(purchaseIds, purchaseId)
+	end
+
+	local function isSaved(): boolean
+		-- Saves from before there were purchases don't have the list until their next save
+		return table.find(profile.LastSavedData.PurchaseIds or {}, purchaseId) ~= nil
+	end
+	while not isSaved() and profile:IsActive() do
+		local lastSaved = profile.LastSavedData
+		profile:Save()
+		if profile.LastSavedData == lastSaved then
+			profile.OnAfterSave:Wait()
+		end
+		if not isSaved() and profile:IsActive() then
+			task.wait(PURCHASE_SAVE_RETRY_DELAY)
+		end
+	end
+	return isSaved()
 end
 
 function PlayerDataService.Start()

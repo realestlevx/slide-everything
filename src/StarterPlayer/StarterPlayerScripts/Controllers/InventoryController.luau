@@ -167,6 +167,10 @@ function InventoryController.GetHotbarButton(position: number): ImageButton?
 	return hotbarButtons[position]
 end
 
+function InventoryController.IsOpen(): boolean
+	return isOpen
+end
+
 -- Equips the item, or puts it away if it's already out
 local function toggleEquip(uid: string)
 	equip(if getEquipped() == uid then nil else uid)

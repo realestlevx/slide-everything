@@ -44,16 +44,21 @@ local function getLuckLevels(): { Level }
 	return levels
 end
 
--- 1x, 1.1x, 1.2x and so on up to 5x. Drop pay is multiplied by it, so a drop at 5x pays 50 seconds of
--- income instead of 10. 300 for 1.1x, then 1.6x more each level: about 2K for 1.5x, 21K for 2x, 2.3M
--- for 3x, 250M for 4x and 27B for 5x. Values are made from whole tenths so they show as "1.1x", not
--- "1.1000000000000001x"
-local SPEED_STEPS = 40
+-- 1x, 1.1x, 1.2x and so on up to 10x. Drop pay is multiplied by it, so a drop at 10x pays 100 seconds
+-- of income instead of 10. 300 for 1.1x, then 1.6x more each level: about 2K for 1.5x, 21K for 2x, 2.3M
+-- for 3x, 250M for 4x and 27B for 5x. At 1.6x, 10x would cost far more than anything else in the game,
+-- so past 5x it's 1.15x more each level: about 110B for 6x, 450B for 7x, 1.8T for 8x, 7.3T for 9x and
+-- 29T for 10x, about what the other upgrades top out at. Values are made from whole tenths so they
+-- show as "1.1x", not "1.1000000000000001x"
+local SPEED_STEPS = 90
 local SPEED_PRICE = 300 -- What 1.1x costs
 local SPEED_PRICE_GROWTH = 1.6
+local SPEED_EARLY_STEPS = 40 -- Steps up to 5x, at SPEED_PRICE_GROWTH
+local SPEED_LATE_PRICE_GROWTH = 1.15
 
 local function getSpeedLevels(): { Level }
-	local prices = getPrices({ SPEED_PRICE }, SPEED_PRICE_GROWTH, SPEED_STEPS)
+	local early = getPrices({ SPEED_PRICE }, SPEED_PRICE_GROWTH, SPEED_EARLY_STEPS)
+	local prices = getPrices(early, SPEED_LATE_PRICE_GROWTH, SPEED_STEPS)
 	local levels: { Level } = { { Value = 1 } }
 	for step = 1, SPEED_STEPS do
 		table.insert(levels, { Value = (10 + step) / 10, Price = prices[step] })
@@ -61,11 +66,10 @@ local function getSpeedLevels(): { Level }
 	return levels
 end
 
--- 7.5s, 9s and so on up to 15s, then bigger steps up to 4 minutes: how long a drop's items slide
--- before they fade out, so how far they get. Not on the economy sheet yet, so the prices are a
--- placeholder: 500 for 9s, then 4x more each level, about 8.2M for 30s, 524M for 60s, 134B for 120s
--- and 34T for 240s
-local TIME_VALUES = { 7.5, 9, 10.5, 12, 13.5, 15, 20, 25, 30, 40, 50, 60, 75, 90, 105, 120, 150, 180, 210, 240 } -- Seconds
+-- 7.5s, 9s and so on up to 15s, then bigger steps up to a minute: how long a drop's items slide before
+-- they fade out, so how far they get. Not on the economy sheet yet, so the prices are a placeholder:
+-- 500 for 9s, then 4x more each level, about 8.2M for 30s and 524M for 60s
+local TIME_VALUES = { 7.5, 9, 10.5, 12, 13.5, 15, 20, 25, 30, 40, 50, 60 } -- Seconds
 local TIME_PRICE = 500 -- What 9s costs
 local TIME_PRICE_GROWTH = 4
 

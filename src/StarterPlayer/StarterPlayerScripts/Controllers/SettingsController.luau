@@ -1,8 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Icon = require(ReplicatedStorage.Packages.TopbarPlus)
@@ -10,7 +8,7 @@ local Tutorial = require(ReplicatedStorage.Shared.Tutorial)
 local Volumes = require(ReplicatedStorage.Shared.Volumes)
 
 local ButtonController = require(script.Parent.ButtonController)
-local HudController = require(script.Parent.HudController)
+local MenuController = require(script.Parent.MenuController)
 
 local SetFastMode = ReplicatedStorage.Remotes.SetFastMode
 local SetLuck = ReplicatedStorage.Remotes.SetLuck
@@ -24,31 +22,6 @@ local ICON_IMAGE = "rbxassetid://18801194936"
 local ICON_IMAGE_SCALE = 0.75 -- Of the button, up from TopbarPlus's 0.5
 local ICON_CAPTION = "Settings"
 local ICON_ORDER = 2 -- After the Inventory button, which keeps TopbarPlus's own order of a little over 1
--- The menu opens by fading in as it grows from its center and rises into place, overshooting a
--- little, and closes by fading out as it shrinks and drops back away
-local CLOSED_SCALE = 0.85 -- Of its size
-local CLOSED_DROP = 0.08 -- Of its height, how far below its place it rises from and drops back to
-local OPEN_POSITION = UDim2.fromScale(0.5, 0.5) -- In the holder that takes its place (see ButtonController)
-local CLOSED_POSITION = UDim2.fromScale(0.5, 0.5 + CLOSED_DROP)
-local OPEN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local OPEN_FADE_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out) -- Solid before it settles
-local CLOSE_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
--- The properties that fade, by the classes that have them. Each fades from what it's set to in
--- Studio up to fully see-through
-local FADED_PROPERTIES = {
-	GuiObject = { "BackgroundTransparency" },
-	TextLabel = { "TextTransparency", "TextStrokeTransparency" },
-	TextButton = { "TextTransparency", "TextStrokeTransparency" },
-	ImageLabel = { "ImageTransparency" },
-	ImageButton = { "ImageTransparency" },
-	UIStroke = { "Transparency" },
-}
--- While it's open the world behind it blurs a little and the camera widens its view
-local BLUR_SIZE = 12
-local FOV_BOOST = 10 -- Degrees added to the camera's FieldOfView
-local EFFECTS_IN_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local EFFECTS_OUT_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local FOV_STEP_NAME = "SettingsFov"
 
 -- Volume name (see Volumes) -> its row in the Settings gui's Holder, which has its slider
 local VOLUME_ROWS = {
@@ -101,22 +74,7 @@ local SettingsController = {
 }
 
 local icon: any = nil
-local isOpen = false
-local openVersion = 0 -- Counts opens and closes, so a close that's been reopened since doesn't hide it
-
--- Parts of the Settings gui, which is remade on every respawn, so they're found again each time
-local main: GuiObject? = nil
-local openScale: UIScale? = nil
--- Each faded thing in the menu -> its faded properties -> what they're at fully shown
-local fadeBases: { [Instance]: { [string]: number } } = {}
-local shown = Instance.new("NumberValue") -- How far the menu's faded in, 0 to 1, tweened in and out
-
-local blur: BlurEffect? = nil
-local fovBoost = Instance.new("NumberValue") -- How far the view's widened right now, tweened in and out
--- The camera the widening is on until the frame's drawn, and its FieldOfView without and with it
-local widenedCamera: Camera? = nil
-local unwidenedFov = 0
-local widenedFov = 0
+local menu = MenuController.Create()
 
 local fastMode = false
 -- Set once the player clicks it, so their saved choice reaching the client late can't switch it back
@@ -231,116 +189,6 @@ local function loadSavedVolume(volume: Volume)
 	end
 end
 
--- The widening goes on just before each frame is drawn and comes off again straight after, so
--- everything else that sets the camera's FieldOfView or keeps it to put back, like the drop camera
--- and the roll and floor zooms, only ever sees it without, and can't keep the widening by mistake
-local function unwiden()
-	local camera = widenedCamera
-	if not camera then
-		return
-	end
-	widenedCamera = nil
-	-- Left as it is if something else has set it since
-	if camera.FieldOfView == widenedFov then
-		camera.FieldOfView = unwidenedFov
-	end
-end
-
-local function widen()
-	unwiden()
-	local boost = fovBoost.Value
-	if boost <= 0 then
-		return
-	end
-	local camera = workspace.CurrentCamera
-	unwidenedFov = camera.FieldOfView
-	camera.FieldOfView = unwidenedFov + boost
-	-- Read back, since it's clamped and stored less precisely than it's set
-	widenedFov = camera.FieldOfView
-	widenedCamera = camera
-end
-
-local function fade(instance: Instance, properties: { [string]: number })
-	for property, base in properties do
-		(instance :: any)[property] = 1 - (1 - base) * shown.Value
-	end
-end
-
-local function fadeAll()
-	for instance, properties in fadeBases do
-		fade(instance, properties)
-	end
-end
-
--- Keeps what it's at now as fully shown, so it's tracked before it's ever faded. Buttons' holders
--- (see ButtonController) come in after it's bound, and a button moved into one is already tracked
-local function trackFade(bases: { [Instance]: { [string]: number } }, instance: Instance)
-	if bases[instance] then
-		return
-	end
-	local properties = {}
-	for className, names in FADED_PROPERTIES do
-		if instance:IsA(className) then
-			for _, property in names do
-				properties[property] = (instance :: any)[property]
-			end
-		end
-	end
-	if next(properties) ~= nil then
-		bases[instance] = properties
-		fade(instance, properties)
-	end
-end
-
-local function setOpen(open: boolean)
-	isOpen = open
-	openVersion += 1
-	local version = openVersion
-
-	HudController.SetMenuOpen(open)
-	local effectsInfo = if open then EFFECTS_IN_INFO else EFFECTS_OUT_INFO
-	TweenService:Create(fovBoost, effectsInfo, { Value = if open then FOV_BOOST else 0 }):Play()
-	local effect = blur
-	if effect then
-		effect.Enabled = true
-		TweenService:Create(effect, effectsInfo, { Size = if open then BLUR_SIZE else 0 }):Play()
-		if not open then
-			task.delay(effectsInfo.Time, function()
-				if openVersion == version then
-					effect.Enabled = false
-				end
-			end)
-		end
-	end
-
-	local frame, scale = main, openScale
-	if not (frame and scale) then
-		return
-	end
-	if open then
-		-- From fully closed, or from wherever a close it interrupts had got to
-		if not frame.Visible then
-			scale.Scale = CLOSED_SCALE
-			frame.Position = CLOSED_POSITION
-			shown.Value = 0
-			fadeAll()
-		end
-		frame.Visible = true
-		TweenService:Create(scale, OPEN_INFO, { Scale = 1 }):Play()
-		TweenService:Create(frame, OPEN_INFO, { Position = OPEN_POSITION }):Play()
-		TweenService:Create(shown, OPEN_FADE_INFO, { Value = 1 }):Play()
-	else
-		TweenService:Create(scale, CLOSE_INFO, { Scale = CLOSED_SCALE }):Play()
-		TweenService:Create(frame, CLOSE_INFO, { Position = CLOSED_POSITION }):Play()
-		TweenService:Create(shown, CLOSE_INFO, { Value = 0 }):Play()
-		task.delay(CLOSE_INFO.Time, function()
-			if openVersion == version then
-				frame.Visible = false
-			end
-		end)
-	end
-end
-
 local function bindSlider(slider: Slider, row: Instance)
 	local track = row:WaitForChild("Scroller") :: GuiObject
 	local knob = track:WaitForChild("Slider") :: GuiObject
@@ -408,23 +256,7 @@ local function bindGui(gui: Instance)
 	local exitButton = frame:WaitForChild("Header"):WaitForChild("ExitButton") :: GuiButton
 	local holder = frame:WaitForChild("Holder")
 
-	main = frame
-	-- Scaled from its center rather than the top edge it's placed by
-	local scale = ButtonController.MakeScalable(frame)
-	scale.Scale = if isOpen then 1 else CLOSED_SCALE
-	openScale = scale
-	frame.Position = if isOpen then OPEN_POSITION else CLOSED_POSITION
-	frame.Visible = isOpen
-
-	local bases = {}
-	fadeBases = bases
-	trackFade(bases, frame)
-	for _, descendant in frame:GetDescendants() do
-		trackFade(bases, descendant)
-	end
-	frame.DescendantAdded:Connect(function(descendant)
-		trackFade(bases, descendant)
-	end)
+	MenuController.Bind(menu, frame)
 
 	for _, slider in sliders do
 		task.spawn(bindSlider, slider, holder:WaitForChild(slider.Row))
@@ -518,19 +350,6 @@ local function createLuck()
 	load()
 end
 
--- On the camera, so it's only on this player's screen and out of the way of the stage lighting looks
-local function createBlur()
-	local effect = Instance.new("BlurEffect")
-	effect.Name = "SettingsBlur"
-	effect.Size = 0
-	effect.Enabled = false
-	effect.Parent = workspace.CurrentCamera
-	blur = effect
-	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-		effect.Parent = workspace.CurrentCamera
-	end)
-end
-
 local function createIcon()
 	icon = Icon.new()
 		:setName("Settings")
@@ -540,7 +359,7 @@ local function createIcon()
 		:setCaption(ICON_CAPTION)
 		:setOrder(ICON_ORDER)
 		:bindEvent("toggled", function(_, isSelected: boolean)
-			setOpen(isSelected)
+			MenuController.SetOpen(menu, isSelected)
 		end)
 
 	-- Gone through the tutorial
@@ -567,12 +386,6 @@ function SettingsController.Start()
 	createLuck()
 	LocalPlayer:GetAttributeChangedSignal("FastMode"):Connect(loadSavedFastMode)
 	loadSavedFastMode()
-
-	shown.Changed:Connect(fadeAll)
-	createBlur()
-	-- After every other camera step, the drop camera's too, and taken off once the frame's drawn
-	RunService:BindToRenderStep(FOV_STEP_NAME, Enum.RenderPriority.Last.Value, widen)
-	RunService.PreAnimation:Connect(unwiden)
 
 	PlayerGui.ChildAdded:Connect(function(child)
 		if child.Name == "Settings" then

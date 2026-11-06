@@ -7,7 +7,8 @@ local Rainbow = require(ReplicatedStorage.Shared.Rainbow)
 local LocalPlayer = Players.LocalPlayer
 
 -- Every UIGradient named Limited, in Workspace or the player's guis, scrolls through the rainbow in
--- step with the drop's multiplier. So far only the favorite goal sign's free item has them
+-- step with the drop's multiplier. So far the favorite goal sign's free item and the offline earnings
+-- popup have them
 local GRADIENT_NAME = "Limited"
 
 local gradients: { [UIGradient]: boolean } = {}
