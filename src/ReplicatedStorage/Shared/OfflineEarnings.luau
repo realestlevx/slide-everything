@@ -1,4 +1,4 @@
-local GamePasses = require(script.Parent.GamePasses)
+local CashPasses = require(script.Parent.CashPasses)
 
 -- What a player's slots earn while they're away. It's worked out as they join and waits in their save
 -- until they take it from the popup, as it is or multiplied with a developer product. New players
@@ -19,7 +19,7 @@ end
 -- What the player gets for taking what's waiting as it is, with their cash pass
 function OfflineEarnings.GetWaiting(player: Player): number
 	local cash = player:GetAttribute(OfflineEarnings.ATTRIBUTE)
-	return if typeof(cash) == "number" then cash * GamePasses.GetCashMultiplier(player) else 0
+	return if typeof(cash) == "number" then cash * CashPasses.GetMultiplier(player) else 0
 end
 
 return OfflineEarnings

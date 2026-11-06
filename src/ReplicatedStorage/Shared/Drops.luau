@@ -13,9 +13,9 @@ local Drops = {
 	COOLDOWN = 10, -- Seconds from the start of one drop to the next
 	MAX_PILE = 50, -- Finished items shown piled on the collect pad. Older ones still count, just unseen
 	-- Studs per second items slide at, before any Sliding Speed upgrade. The upgrade raises it by
-	-- SPEED_SHARE of its own rise, so there's still time to steer, and each stud pays the rest: 3x
-	-- slides at 2x, and each stud pays 1.5x; 5x slides at 3x, and each stud pays 1.67x; 10x slides at
-	-- 5.5x, and each stud pays 1.82x
+	-- SPEED_SHARE of its own rise, so there's still time to steer: 3x slides at 2x, 5x at 3x and 10x
+	-- at 5.5x. A stud pays the same however fast it's crossed, so the upgrade pays by the walls and
+	-- studs it gets items to in the drop's time
 	SLIDE_SPEED = 30,
 	SPEED_SHARE = 0.5,
 	MULTIPLIER_ATTRIBUTE = "Multiplier", -- On the walls across the slide
@@ -128,17 +128,10 @@ function Drops.Measure(walls: { Wall }, distance: number): (number, number, numb
 	return paid + (distance - from) * multiplier, multiplier, passed
 end
 
--- What an item earns for its run, from the studs at 1x that Measure gives, the owner's Sliding Speed
--- and what their cash pass multiplies it by
-function Drops.GetPay(
-	item: Items.Item,
-	level: number,
-	paidDistance: number,
-	speed: number,
-	cashMultiplier: number
-): number
-	local perStud = speed * Drops.SLIDE_SPEED / Drops.GetSlideSpeed(speed)
-	return Upgrades.GetMoneyPerSecond(item, level) * Drops.STUD_SECONDS * paidDistance * perStud * cashMultiplier
+-- What an item earns for its run, from the studs at 1x that Measure gives and what the owner's cash
+-- pass multiplies it by
+function Drops.GetPay(item: Items.Item, level: number, paidDistance: number, cashMultiplier: number): number
+	return Upgrades.GetMoneyPerSecond(item, level) * Drops.STUD_SECONDS * paidDistance * cashMultiplier
 end
 
 return Drops

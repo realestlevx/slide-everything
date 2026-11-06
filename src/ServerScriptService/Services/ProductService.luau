@@ -2,6 +2,7 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local CashPasses = require(ReplicatedStorage.Shared.CashPasses)
 local OfflineEarnings = require(ReplicatedStorage.Shared.OfflineEarnings)
 
 local OfflineEarningsService = require(script.Parent.OfflineEarningsService)
@@ -12,6 +13,11 @@ local PlayerDataService = require(script.Parent.PlayerDataService)
 local GRANTS: { [number]: (player: Player) -> boolean } = {
 	[OfflineEarnings.PRODUCT_ID] = OfflineEarningsService.Multiply,
 }
+for _, tier in CashPasses.Tiers do
+	GRANTS[tier.Id] = function(player)
+		return PlayerDataService.RaiseCashMultiplier(player, tier.Multiplier)
+	end
+end
 
 local ProductService = {}
 

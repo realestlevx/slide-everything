@@ -11,6 +11,7 @@ local Floors = {
 	Prices = {
 		[2] = 700000,
 		[3] = 61000000,
+		[4] = 1200000000, -- Has no model or marker yet, so it isn't sold
 	} :: { [number]: number },
 	-- For a floor whose slot markers are left as copies of an earlier floor's prices: its slots cost
 	-- those times this instead. Floor 2's markers carry their own prices, so it has none. Floor 3's

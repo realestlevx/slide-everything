@@ -21,6 +21,7 @@ local PROFILE_TEMPLATE = {
 	Money = 1000, -- Starting money
 	Gems = 0,
 	MoneyPerSecond = 0, -- What their slots earn, before any cash pass; see Gems.GetFind
+	CashMultiplier = 1, -- What their best cash pass multiplies their earnings by; see CashPasses
 	Inventory = {} :: { Items.OwnedItem }, -- In the order the items were bought
 	Slots = {} :: { [string]: string }, -- Slot key (see Places.GetSlotKey) -> Uid of the inventory item placed in it
 	-- Hotbar position (as text, 1 to Hotbar.SIZE) -> Uid of the item kept there. The rest of the items
@@ -139,6 +140,7 @@ local function onPlayerAdded(player: Player)
 		player:SetAttribute("Money", profile.Data.Money)
 		player:SetAttribute("Gems", profile.Data.Gems)
 		player:SetAttribute("MoneyPerSecond", profile.Data.MoneyPerSecond)
+		player:SetAttribute("CashMultiplier", profile.Data.CashMultiplier)
 		for name in Volumes do
 			player:SetAttribute(`{name}Volume`, profile.Data.Volumes[name] or 1)
 		end
@@ -194,6 +196,19 @@ function PlayerDataService.SetMoneyPerSecond(player: Player, amount: number)
 
 	data.MoneyPerSecond = amount
 	player:SetAttribute("MoneyPerSecond", amount)
+end
+
+-- They've bought a cash pass. It only goes up, so whatever they paid for, they never lose a better one.
+-- Returns whether it could be given
+function PlayerDataService.RaiseCashMultiplier(player: Player, multiplier: number): boolean
+	local data = PlayerDataService.Get(player)
+	if not data then
+		return false
+	end
+
+	data.CashMultiplier = math.max(data.CashMultiplier, multiplier)
+	player:SetAttribute("CashMultiplier", data.CashMultiplier)
+	return true
 end
 
 -- Gives out a developer product purchase and waits for it to be saved, so it's only finished with

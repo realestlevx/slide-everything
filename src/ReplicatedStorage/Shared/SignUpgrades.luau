@@ -44,15 +44,15 @@ local function getLuckLevels(): { Level }
 	return levels
 end
 
--- 1x, 1.1x, 1.2x and so on up to 10x. Drop pay is multiplied by it, so a drop at 10x pays 100 seconds
--- of income instead of 10. 300 for 1.1x, then 1.6x more each level: about 2K for 1.5x, 21K for 2x, 2.3M
--- for 3x, 250M for 4x and 27B for 5x. At 1.6x, 10x would cost far more than anything else in the game,
--- so past 5x it's 1.15x more each level: about 110B for 6x, 450B for 7x, 1.8T for 8x, 7.3T for 9x and
--- 29T for 10x, about what the other upgrades top out at. Values are made from whole tenths so they
--- show as "1.1x", not "1.1000000000000001x"
+-- 1x, 1.1x, 1.2x and so on up to 10x. Items slide faster with it, so they get further and past more
+-- walls in a drop's time. 150 for 1.1x, then 1.55x more each level, as on the economy sheet: 868 for
+-- 1.5x, about 7.8K for 2x, 620K for 3x, 49M for 4x and 3.9B for 5x. At 1.55x, 10x would cost far more
+-- than anything else in the game, so past 5x it's 1.15x more each level: about 16B for 6x, 65B for 7x,
+-- 264B for 8x, 1.1T for 9x and 4.3T for 10x. Values are made from whole tenths so they show as "1.1x",
+-- not "1.1000000000000001x"
 local SPEED_STEPS = 90
-local SPEED_PRICE = 300 -- What 1.1x costs
-local SPEED_PRICE_GROWTH = 1.6
+local SPEED_PRICE = 150 -- What 1.1x costs
+local SPEED_PRICE_GROWTH = 1.55
 local SPEED_EARLY_STEPS = 40 -- Steps up to 5x, at SPEED_PRICE_GROWTH
 local SPEED_LATE_PRICE_GROWTH = 1.15
 
@@ -84,13 +84,13 @@ end
 
 -- 1.1x, 1.2x, 1.3x and so on up to 6x. A multiplier wall pays its own Multiplier plus what this is over
 -- 1x, so the walls, which are all at 1x, start at 1.1x with it: the first one a player goes through pays
--- this much. Not on the economy sheet yet, so the prices are a placeholder: 25K for 1.2x, then 1.5x more
--- each level, about 640K for 2x, 37M for 3x, 2.1B for 4x, 123B for 5x and 7.1T for 6x. Values are made
+-- this much. Not on the economy sheet yet, so the prices are a placeholder: 5K for 1.2x, then 1.6x more
+-- each level, about 214K for 2x, 23.5M for 3x, 2.6B for 4x, 285B for 5x and 31T for 6x. Values are made
 -- from whole tenths, like Sliding Speed's
 local SLIDE_START = 11 -- In tenths: what everyone starts at
 local SLIDE_STEPS = 49
-local SLIDE_PRICE = 25000 -- What the first step up costs
-local SLIDE_PRICE_GROWTH = 1.5
+local SLIDE_PRICE = 5000 -- What the first step up costs
+local SLIDE_PRICE_GROWTH = 1.6
 
 local function getSlideLevels(): { Level }
 	local prices = getPrices({ SLIDE_PRICE }, SLIDE_PRICE_GROWTH, SLIDE_STEPS)
@@ -128,7 +128,7 @@ local SignUpgrades = {
 			Suffix = "x",
 			Levels = getLuckLevels(),
 		},
-		-- Multiplies drop pay, and how fast items slide; see Drops.GetPay and DropController
+		-- How fast items slide, so how far they get in a drop's time; see Drops.GetSlideSpeed and DropController
 		SlideSpeed = {
 			Frame = "Speed_Frame",
 			Suffix = "x",

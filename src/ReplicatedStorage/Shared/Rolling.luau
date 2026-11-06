@@ -58,13 +58,16 @@ end)
 -- odds that count, whatever its rarity. Between anchors the curves run evenly on a log scale, and
 -- past the last one they stay put. At 1x the ceiling is SPREAD above a floor of 1 in 1, so the odds
 -- are exactly what the stands show.
--- They're set against every item on the economy sheet, the ones not in the game yet too: 10x starts
--- rolling Rares, 20x no Uncommons any more but a few Epics, 30x the odd Legendary and Mythic, 40x
+-- They're set against every item on the economy sheet, the ones not in the game yet too: 10x rolls
+-- about 1 Rare in 30, 20x no Uncommons any more but a few Epics, 30x the odd Legendary and Mythic, 40x
 -- Legendaries, Mythics and a few Exotics, and 100x mostly Mythic and above, with Legendaries still in
 local FLOOR = { -- Luck, and the 1 in N it's at
 	{ 1, 1 },
-	{ 8, 1 },
-	{ 15, 60 },
+	{ 3, 1 },
+	{ 6, 1.6 },
+	{ 10, 4 },
+	{ 14, 15 },
+	{ 17, 80 },
 	{ 20, 900 },
 	{ 30, 3000 },
 	{ 40, 12000 },
@@ -77,7 +80,11 @@ local FLOOR = { -- Luck, and the 1 in N it's at
 }
 local CEILING = { -- Luck, and the 1 in N it's at
 	{ 1, 100 },
-	{ 10, 1000 },
+	{ 3, 400 },
+	{ 5, 1000 },
+	{ 8, 3500 },
+	{ 10, 6000 },
+	{ 15, 9000 },
 	{ 20, 10000 },
 	{ 30, 300000 },
 	{ 40, 3e6 },

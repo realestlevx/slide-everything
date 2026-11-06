@@ -5,9 +5,9 @@ local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
+local CashPasses = require(ReplicatedStorage.Shared.CashPasses)
 local Drops = require(ReplicatedStorage.Shared.Drops)
 local Floors = require(ReplicatedStorage.Shared.Floors)
-local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Items = require(ReplicatedStorage.Shared.Items)
 local PhysicalItem = require(ReplicatedStorage.Shared.PhysicalItem)
 local Places = require(ReplicatedStorage.Shared.Places)
@@ -320,7 +320,7 @@ local function measure(current: Drop, dropped: DroppedItem)
 	dropped.Reached = math.max(dropped.Reached, along)
 	local paidDistance, multiplier, passed = Drops.Measure(dropped.Gates, dropped.Reached)
 	dropped.Multiplier, dropped.Passed = multiplier, passed
-	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, current.Speed, current.CashMultiplier)
+	dropped.Pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, current.CashMultiplier)
 end
 
 -- What the drop has made so far, how far it's got, the best multiplier it's reached, the time it has
@@ -985,7 +985,7 @@ local function startDrop(place: Folder, prompt: ProximityPrompt)
 		Direction = direction,
 		Ending = false,
 		Speed = speed,
-		CashMultiplier = GamePasses.GetCashMultiplier(LocalPlayer),
+		CashMultiplier = CashPasses.GetMultiplier(LocalPlayer),
 		SlideSpeed = Drops.GetSlideSpeed(speed),
 		Slide = getUpgrade(place, "Slide"),
 		Focus = nil,

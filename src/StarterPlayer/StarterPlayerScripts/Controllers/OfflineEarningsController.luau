@@ -115,7 +115,6 @@ end
 
 local function onTake()
 	if menu.IsOpen and not receiptDue then
-		playSound("Collection", "Collect")
 		MenuController.SetOpen(menu, false)
 		TakeOfflineCash:FireServer()
 	end
@@ -124,7 +123,6 @@ end
 -- It only closes once the server's multiplied it. A prompt that's cancelled leaves it open
 local function onMultiply()
 	if menu.IsOpen then
-		playSound("Collection", "Collect")
 		MarketplaceService:PromptProductPurchase(LocalPlayer, OfflineEarnings.PRODUCT_ID)
 	end
 end
@@ -156,6 +154,7 @@ local function onTaken(amount: any)
 	end
 	receiptDue = false
 	MenuController.SetOpen(menu, false)
+	playSound("Collection", "Collect")
 	popBills(amount)
 end
 

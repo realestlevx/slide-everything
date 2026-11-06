@@ -1,8 +1,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local CashPasses = require(ReplicatedStorage.Shared.CashPasses)
 local Drops = require(ReplicatedStorage.Shared.Drops)
-local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Gems = require(ReplicatedStorage.Shared.Gems)
 local Items = require(ReplicatedStorage.Shared.Items)
 local Places = require(ReplicatedStorage.Shared.Places)
@@ -112,7 +112,7 @@ local function onDrop(place: Folder, player: Player)
 		StartedAt = os.clock(),
 		Speed = SignUpgradeService.GetValue(player, "SlideSpeed"),
 		Time = SignUpgradeService.GetValue(player, "SlideTime"),
-		CashMultiplier = GamePasses.GetCashMultiplier(player),
+		CashMultiplier = CashPasses.GetMultiplier(player),
 		Walls = slideWalls,
 		Items = dropped,
 		FindsGems = not lastGemDrop
@@ -125,7 +125,8 @@ local function onDrop(place: Folder, player: Player)
 end
 
 -- The walls down the slide that the client says an item touched, nearest first, each once. Only
--- walls known here count, at the multipliers they have here
+-- walls known here count, at the multipliers they have here. Each place's lane has its own walls the
+-- same way down the slide, so each thing the client says names just one of them
 local function getGates(drop: Drop, alongs: any): { Drops.Wall }
 	local gates: { Drops.Wall } = {}
 	if typeof(alongs) ~= "table" then
@@ -133,10 +134,12 @@ local function getGates(drop: Drop, alongs: any): { Drops.Wall }
 	end
 	-- An item can touch each wall only once, so a longer list is cut short
 	local count = math.min(#alongs, #drop.Walls)
+	local named: { [number]: boolean } = {}
 	for _, wall in drop.Walls do
 		for index = 1, count do
 			local along = alongs[index]
-			if typeof(along) == "number" and math.abs(along - wall.Along) <= WALL_MATCH then
+			if not named[index] and typeof(along) == "number" and math.abs(along - wall.Along) <= WALL_MATCH then
+				named[index] = true
 				table.insert(gates, wall)
 				break
 			end
@@ -169,7 +172,7 @@ local function onResult(player: Player, slotKey: any, distance: any, alongs: any
 
 	local reached = math.min(distance, Drops.GetSlideSpeed(drop.Speed) * SPEED_SLACK * drop.Time)
 	local paidDistance = Drops.Measure(getGates(drop, alongs), reached)
-	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.Speed, drop.CashMultiplier)
+	local pay = Drops.GetPay(dropped.Item, dropped.Level, paidDistance, drop.CashMultiplier)
 	data.CollectCash += pay
 	if drop.FindsGems then
 		gemChances[player] = (gemChances[player] or 0) + 1

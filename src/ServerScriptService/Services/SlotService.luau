@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
+local CashPasses = require(ReplicatedStorage.Shared.CashPasses)
 local Floors = require(ReplicatedStorage.Shared.Floors)
 local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Items = require(ReplicatedStorage.Shared.Items)
@@ -298,7 +299,7 @@ end
 local function payOut(player: Player)
 	local earnings, total = getEarnings(player)
 	if total > 0 then
-		local multiplier = GamePasses.GetCashMultiplier(player)
+		local multiplier = CashPasses.GetMultiplier(player)
 		for name, amount in earnings do
 			earnings[name] = amount * multiplier
 		end

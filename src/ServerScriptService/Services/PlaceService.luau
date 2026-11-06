@@ -1,8 +1,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local CashPasses = require(ReplicatedStorage.Shared.CashPasses)
 local FormatMoney = require(ReplicatedStorage.Shared.FormatMoney)
-local GamePasses = require(ReplicatedStorage.Shared.GamePasses)
 local Places = require(ReplicatedStorage.Shared.Places)
 
 local SPAWN_OFFSET = Vector3.new(0, 3, 0)
@@ -50,7 +50,7 @@ end
 -- Shows what the owner really makes a second, with their cash pass
 local function updateMoneyPerSecond(place: Folder, player: Player)
 	local label = (getBillboard(place) :: any).MoneyPerSecond
-	local earning = (player:GetAttribute("MoneyPerSecond") or 0) * GamePasses.GetCashMultiplier(player)
+	local earning = (player:GetAttribute("MoneyPerSecond") or 0) * CashPasses.GetMultiplier(player)
 	label.Text = `{FormatMoney(earning, 2)}/s`
 end
 
